@@ -1,5 +1,6 @@
 # strategies/bollong.py
 import pandas as pd
+import numpy as np
 
 from config import logger
 from strategies import register_strategy
@@ -26,7 +27,7 @@ class BollongStrategy(BaseStrategy):
     Genereert signalen wanneer de prijs boven de upper band uitbreekt.
     """
 
-    def __init__(self, # Signaal parameters
+    def __init__(self,  # Signaal parameters
                  window=50, std_dev=2.0,
 
                  # Stop loss parameters
@@ -112,9 +113,28 @@ class BollongStrategy(BaseStrategy):
 
     def calculate_adx(self, df, period=14):
         """Bereken Average Directional Index (ADX) voor trendsterkte."""
-        # Implementeer ADX berekening als die nodig is
-        # Dit is een placeholder
-        return pd.Series(index=df.index, data=25.0)  # Placeholder waarde
+        # Bereken +DI en -DI
+        plus_dm = df['high'].diff()
+        minus_dm = df['low'].diff().multiply(-1)
+        plus_dm = plus_dm.where((plus_dm > 0) & (plus_dm > minus_dm), 0)
+        minus_dm = minus_dm.where((minus_dm > 0) & (minus_dm > plus_dm), 0)
+
+        # Bereken True Range (TR)
+        tr1 = abs(df['high'] - df['low'])
+        tr2 = abs(df['high'] - df['close'].shift(1))
+        tr3 = abs(df['low'] - df['close'].shift(1))
+        tr = pd.DataFrame({'tr1': tr1, 'tr2': tr2, 'tr3': tr3}).max(axis=1)
+
+        # Smoothed TR en DM
+        atr = tr.rolling(window=period).mean()
+        plus_di = 100 * (plus_dm.rolling(window=period).mean() / atr)
+        minus_di = 100 * (minus_dm.rolling(window=period).mean() / atr)
+
+        # Bereken DX en ADX
+        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+        adx = dx.rolling(window=period).mean()
+
+        return adx
 
     def generate_signals(self, df):
         """
@@ -165,8 +185,20 @@ class BollongStrategy(BaseStrategy):
         else:  # fixed_percent
             tp_stop = pd.Series(self.tp_fixed_percent, index=df.index)
 
-        # Trailing stop zou extra parameters naar VectorBT vereisen
-        # Voor nu gebruiken we standaard sl/tp
+        # Trail stop parameter toevoegen als het wordt gebruikt
+        # VectorBT heeft ingebouwde ondersteuning voor trailing stops
+        if self.use_trailing_stop:
+            # In vectorbt voegen we de trail_stop toe via Portfolio.from_signals
+            # Je kunt deze parameter later doorgeven
+            if self.trailing_stop_method == "atr_based":
+                trail_stop = self.trailing_stop_atr_mult * atr / df['close']
+            else:  # fixed_percent
+                trail_stop = pd.Series(self.trailing_stop_percent, index=df.index)
+
+            # Zet het als attribuut zodat het bereikbaar is voor backtest
+            self.trail_stop = trail_stop
+        else:
+            self.trail_stop = None
 
         # Log aantal signalen
         logger.info(f"Aantal LONG signalen: {entries.sum()}")
@@ -178,22 +210,23 @@ class BollongStrategy(BaseStrategy):
         """
         Default parameters voor grid search optimalisatie.
         """
-        return {# Signaal parameters
-            'window': range(20, 101, 10),  # 20, 30, 40, ..., 100
-            'std_dev': [1.5, 2.0, 2.5, 3.0],  # Standaarddeviatie waarden
+        return {  # Signaal parameters
+            'window': [20, 30, 40, 50, 60, 70, 80, 90, 100], 'std_dev': [1.5, 2.0, 2.5],
 
             # Stop loss parameters
-            'sl_method': ["atr_based", "fixed_percent"],
-            'sl_atr_mult': [1.0, 1.5, 2.0, 2.5, 3.0],
+            'sl_method': ["fixed_percent"],
             'sl_fixed_percent': [0.01, 0.015, 0.02, 0.025, 0.03],
 
             # Take profit parameters
-            'tp_method': ["atr_based", "fixed_percent"],
-            'tp_atr_mult': [2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0],
+            'tp_method': ["fixed_percent"],
             'tp_fixed_percent': [0.02, 0.03, 0.04, 0.05, 0.06],
 
+            # Trailing stop
+            'use_trailing_stop': [False, True],
+            'trailing_stop_percent': [0.01, 0.015, 0.02],
+
             # Risk management
-            'risk_per_trade': [0.005, 0.01, 0.015, 0.02]}
+            'risk_per_trade': [0.01]}
 
     @classmethod
     def get_parameter_descriptions(cls):
@@ -210,15 +243,18 @@ class BollongStrategy(BaseStrategy):
             'tp_atr_mult': 'Take-profit als factor van ATR (als tp_method="atr_based")',
             'tp_fixed_percent': 'Take-profit als vast percentage (als tp_method="fixed_percent")',
             'use_trailing_stop': 'Trailing stop activeren (true/false)',
+            'trailing_stop_method': 'Methode voor trailing stop: "atr_based" of "fixed_percent"',
+            'trailing_stop_percent': 'Trailing stop als vast percentage',
+            'trailing_stop_atr_mult': 'Trailing stop als factor van ATR',
             'risk_per_trade': 'Risico per trade als percentage van portfolio (0.01 = 1%)'}
 
     @classmethod
     def get_performance_metrics(cls):
         """Definieer belangrijke metrics voor deze strategie."""
         return ["sharpe_ratio",  # Rendement/risico verhouding
-            "calmar_ratio",  # Rendement/max drawdown
-            "sortino_ratio",  # Downside risico maatstaf
-            "win_rate",  # Percentage winstgevende trades
-            "total_return",  # Totale winst
-            "max_drawdown"  # Maximale drawdown (lager = beter)
-        ]
+                "calmar_ratio",  # Rendement/max drawdown
+                "sortino_ratio",  # Downside risico maatstaf
+                "win_rate",  # Percentage winstgevende trades
+                "total_return",  # Totale winst
+                "max_drawdown"  # Maximale drawdown (lager = beter)
+                ]
