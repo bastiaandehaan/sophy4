@@ -1,0 +1,5 @@
+vectorbt
+MetaTrader5
+pandas
+numpy
+matplotlib
