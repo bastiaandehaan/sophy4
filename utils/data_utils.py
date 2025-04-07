@@ -1,8 +1,11 @@
 # Sophy4/utils/data_utils.py
+from datetime import datetime, timedelta
+
 import MetaTrader5 as mt5
 import pandas as pd
-from datetime import datetime, timedelta
+
 from config import logger
+
 
 def fetch_historical_data(symbol, timeframe=mt5.TIMEFRAME_D1, days=1095, end_date=None):
     if not mt5.initialize():

@@ -1,6 +1,7 @@
 # Sophy4/backtest/backtest.py
-import vectorbt as vbt
 import matplotlib.pyplot as plt
+import vectorbt as vbt
+
 from config import INITIAL_CAPITAL, FEES, logger, OUTPUT_DIR
 
 

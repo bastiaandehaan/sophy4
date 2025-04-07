@@ -1,5 +1,5 @@
 # Sophy4/risk/risk_management.py
-from config import INITIAL_CAPITAL, logger
+from config import logger
 
 def calculate_position_size(capital, price, sl_percent, max_risk=0.01):
     risk_per_trade = capital * max_risk

@@ -1,132 +1,382 @@
+# optimization/optimize.py
+import sys
+import os
+from pathlib import Path
+
+# Voeg projectroot toe aan pythonpath
+sys.path.append(str(Path(__file__).parent.parent))
+
 import vectorbt as vbt
 import pandas as pd
 import numpy as np
+import time
+import json
+import logging
+import matplotlib.pyplot as plt
+from itertools import product
+
+# Nu kunnen we correct importeren
 from utils.data_utils import fetch_historical_data
-from strategies.bollong import bollong_signals
+from strategies import get_strategy, STRATEGIES
 from ftmo_compliance.ftmo_check import check_ftmo_compliance
 from config import SYMBOL, INITIAL_CAPITAL, FEES, logger, OUTPUT_DIR
-from itertools import product  # Standard Python library for cartesian product
-import time
-import logging
 
 
-def optimize_parameters():
+def optimize_strategy(strategy_name, symbol=SYMBOL, param_ranges=None,
+                      # None = gebruik strategy.get_default_params()
+                      metric="sharpe_ratio",  # Primaire optimalisatie metric
+                      top_n=3,  # Aantal top resultaten om terug te geven
+                      initial_capital=INITIAL_CAPITAL, fees=FEES, period_days=1095,
+                      ftmo_compliant_only=True, output_dir=OUTPUT_DIR, verbose=True):
     """
-    Voer een grid search uit om de optimale parameters voor de bollong-strategie te vinden.
-    Optimaliseert op Sharpe Ratio, met FTMO-compliance als voorwaarde.
+    Voer een grid search uit om optimale parameters te vinden voor een strategie.
+
+    Args:
+        strategy_name: Naam van de geregistreerde strategie
+        symbol: Trading symbool
+        param_ranges: Dictionary met parameter namen en ranges
+        metric: Primaire metric om te optimaliseren
+        top_n: Aantal top resultaten om terug te geven
+        initial_capital: Startkapitaal voor backtests
+        fees: Trading kosten percentage
+        period_days: Aantal dagen voor backtest
+        ftmo_compliant_only: Alleen parameter sets die FTMO-compliant zijn
+        output_dir: Map om resultaten op te slaan
+        verbose: Toon voortgangsinformatie
+
+    Returns:
+        dict: Optimalisatie resultaten met top parameter sets
     """
     start_time = time.time()
 
-    # Haal data op
-    df = fetch_historical_data(SYMBOL)
+    # Maak output directory
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True, parents=True)
+
+    # Haal strategie class en default parameter ranges op
+    if strategy_name not in STRATEGIES:
+        raise ValueError(
+            f"Strategie '{strategy_name}' niet gevonden. Beschikbaar: {', '.join(STRATEGIES.keys())}")
+
+    strategy_class = STRATEGIES[strategy_name]
+
+    # Gebruik default parameter ranges indien niet opgegeven
+    if param_ranges is None:
+        param_ranges = strategy_class.get_default_params()
+
+    # Haal de lijst met metrics op die deze strategie belangrijk vindt
+    metrics_list = strategy_class.get_performance_metrics()
+    if metric not in metrics_list:
+        metrics_list.append(metric)
+
+    # Haal historische data op
+    df = fetch_historical_data(symbol, days=period_days)
     if df is None:
-        return
+        logger.error(f"Kon geen historische data ophalen voor {symbol}")
+        return None
 
-    # Definieer parameter ranges
-    window_range = np.arange(20, 101, 10)  # 20, 30, ..., 100
-    std_dev_range = np.arange(1.5, 3.1, 0.5)  # 1.5, 2.0, 2.5, 3.0
-    sl_atr_mult_range = np.arange(1.0, 3.1, 0.5)  # 1.0, 1.5, ..., 3.0
-    tp_atr_mult_range = np.arange(2.0, 5.1, 0.5)  # 2.0, 2.5, ..., 5.0
-
-    # Maak parameter combinaties met Python's built-in product functie
-    param_combinations = list(
-        product(window_range, std_dev_range, sl_atr_mult_range, tp_atr_mult_range))
+    # Maak parameter combinaties
+    param_names = list(param_ranges.keys())
+    param_values = [
+        param_ranges[name] if isinstance(param_ranges[name], list) else list(
+            param_ranges[name]) for name in param_names]
+    param_combinations = list(product(*param_values))
 
     total_combinations = len(param_combinations)
-    logger.info(
-        f"Optimalisatie gestart met {total_combinations} parameter combinaties...")
+    if verbose:
+        logger.info(
+            f"Optimalisatie gestart met {total_combinations} parameter combinaties")
+        logger.info(f"Strategie: {strategy_name}, Symbool: {symbol}")
+        logger.info(f"Optimaliseren voor {metric}, top {top_n} resultaten bewaren")
 
-    # Tijdelijk verlaag log level om externe logs te onderdrukken
-    original_level = logger.getEffectiveLevel()
-    logger.setLevel(logging.ERROR)  # Alleen errors tonen tijdens berekeningen
-
-    best_sharpe = -np.inf
-    best_params = None
-    best_metrics = None
+    # Voorbereiden voor resultaten
+    results = []
+    processed = 0
     compliant_count = 0
-    tested_count = 0
 
-    # Loop door alle combinaties
+    # Verlaag log level tijdens grid search
+    original_level = logger.level
+    if verbose:
+        logger.setLevel(logging.INFO)
+    else:
+        logger.setLevel(logging.WARNING)
+
     try:
+        # Voer grid search uit
         for params in param_combinations:
-            window, std_dev, sl_atr_mult, tp_atr_mult = params
-            tested_count += 1
+            # Maak parameter dictionary
+            param_dict = {name: value for name, value in zip(param_names, params)}
 
-            # Toon voortgangsindicator voor elke 10% van verwerkte combinaties
-            if tested_count % max(1,
-                                  total_combinations // 10) == 0 or tested_count == 1:
-                progress = tested_count / total_combinations * 100
+            # Maak strategie instantie met deze parameters
+            strategy = get_strategy(strategy_name, **param_dict)
+
+            try:
+                # Valideer parameters
+                strategy.validate_parameters()
+
+                # Genereer signalen
+                entries, sl_stop, tp_stop = strategy.generate_signals(df)
+
+                # Voer backtest uit
+                pf = vbt.Portfolio.from_signals(close=df['close'], entries=entries,
+                    sl_stop=sl_stop, tp_stop=tp_stop, init_cash=initial_capital,
+                    fees=fees, freq='1D')
+
+                # Bereken performance metrics
+                metrics_dict = {'total_return': pf.total_return(),
+                    'sharpe_ratio': pf.sharpe_ratio(),
+                    'sortino_ratio': pf.sortino_ratio(),
+                    'calmar_ratio': pf.calmar_ratio(),
+                    'max_drawdown': pf.max_drawdown(),
+                    'win_rate': pf.trades.win_rate() if len(pf.trades) > 0 else 0,
+                    'trades_count': len(pf.trades),
+                    'avg_trade_duration': pf.trades['duration'].mean() if len(
+                        pf.trades) > 0 else 0}
+
+                # Check FTMO compliance
+                compliant, profit_reached = check_ftmo_compliance(pf, metrics_dict)
+
+                # Alleen toevoegen aan resultaten als het FTMO compliant is (indien vereist)
+                if not ftmo_compliant_only or (compliant and profit_reached):
+                    compliant_count += 1
+                    results.append({'params': param_dict, 'metrics': metrics_dict,
+                        'ftmo_compliant': compliant,
+                        'profit_target_reached': profit_reached})
+
+            except Exception as e:
+                if verbose:
+                    logger.warning(f"Fout bij testen parameters {param_dict}: {str(e)}")
+
+            # Update voortgang
+            processed += 1
+            if verbose and processed % max(1, total_combinations // 20) == 0:
                 elapsed = time.time() - start_time
-                remaining = (elapsed / tested_count) * (
-                        total_combinations - tested_count) if tested_count > 0 else 0
-                print(
-                    f"Voortgang: {progress:.1f}% | Verwerkt: {tested_count}/{total_combinations} | "
-                    f"Tijd: {elapsed:.1f}s | Resterende tijd: ~{remaining:.1f}s",
-                    end='\r')
+                remaining = (elapsed / processed) * (total_combinations - processed)
+                logger.info(
+                    f"Voortgang: {processed}/{total_combinations} ({processed / total_combinations * 100:.1f}%) | "
+                    f"Verstreken: {elapsed:.1f}s | Resterend: {remaining:.1f}s | "
+                    f"FTMO compliant: {compliant_count}")
 
-            # Genereer signalen
-            entries, sl_stop, tp_stop = bollong_signals(df, int(window), std_dev,
-                                                        sl_atr_mult, tp_atr_mult)
+        # Sorteer resultaten op de primaire metric
+        # Let op: voor drawdown is lager beter, dus sorteren we anders
+        reverse = metric != 'max_drawdown'
+        sorted_results = sorted(results, key=lambda x: x['metrics'][metric],
+                                reverse=reverse)
 
-            # Voer backtest uit
+        # Neem top N resultaten
+        top_results = sorted_results[:top_n]
+
+        # Genereer gedetailleerd rapport voor top resultaten
+        if verbose:
+            logger.info("\n" + "=" * 60)
+            logger.info(f"OPTIMALISATIE SAMENVATTING VOOR {strategy_name}")
+            logger.info("=" * 60)
+            logger.info(f"Totaal geteste combinaties: {processed}/{total_combinations}")
+            logger.info(
+                f"FTMO compliant combinaties: {compliant_count} ({compliant_count / processed * 100:.1f}%)")
+            logger.info(f"Totale tijd: {time.time() - start_time:.1f} seconden")
+
+            # Toon top resultaten
+            logger.info("\nTOP RESULTATEN:")
+            for i, result in enumerate(top_results):
+                logger.info(f"\n#{i + 1}: {metric} = {result['metrics'][metric]:.4f}")
+                for param_name, param_value in result['params'].items():
+                    logger.info(f"  {param_name}: {param_value}")
+                logger.info("  --- Performance ---")
+                logger.info(f"  Return: {result['metrics']['total_return']:.2%}")
+                logger.info(f"  Sharpe: {result['metrics']['sharpe_ratio']:.2f}")
+                logger.info(f"  Sortino: {result['metrics']['sortino_ratio']:.2f}")
+                logger.info(f"  Calmar: {result['metrics']['calmar_ratio']:.2f}")
+                logger.info(f"  Drawdown: {result['metrics']['max_drawdown']:.2%}")
+                logger.info(f"  Win Rate: {result['metrics']['win_rate']:.2%}")
+                logger.info(f"  Trades: {result['metrics']['trades_count']}")
+
+        # Sla resultaten op in bestand
+        results_file = output_path / f"{strategy_name}_{symbol}_optimization.json"
+        with open(results_file, 'w') as f:
+            json.dump({'strategy': strategy_name, 'symbol': symbol,
+                'total_combinations': total_combinations,
+                'ftmo_compliant_count': compliant_count,
+                'optimization_time': time.time() - start_time, 'top_results': [
+                    {'params': result['params'],
+                        'metrics': {k: float(v) for k, v in result['metrics'].items()}}
+                    for result in top_results]}, f, indent=2)
+
+        if verbose:
+            logger.info(f"\nResultaten opgeslagen in {results_file}")
+
+        # Verifieer het beste resultaat met een aparte backtest
+        if top_results:
+            best_params = top_results[0]['params']
+            if verbose:
+                logger.info("\nVerifiëren van beste resultaat met aparte backtest...")
+
+            strategy = get_strategy(strategy_name, **best_params)
+            entries, sl_stop, tp_stop = strategy.generate_signals(df)
+
             pf = vbt.Portfolio.from_signals(close=df['close'], entries=entries,
-                                            sl_stop=sl_stop, tp_stop=tp_stop,
-                                            init_cash=INITIAL_CAPITAL, fees=FEES,
-                                            freq='1D')
+                sl_stop=sl_stop, tp_stop=tp_stop, init_cash=initial_capital, fees=fees,
+                freq='1D')
 
-            # Bereken metrics
-            metrics = {'total_return': pf.total_return(),
-                       'sharpe_ratio': pf.sharpe_ratio(),
-                       'max_drawdown': pf.max_drawdown(),
-                       'win_rate': pf.trades.win_rate() if len(pf.trades) > 0 else 0,
-                       'trades_count': len(pf.trades)}
+            # Maak equity curve plot
+            plt.figure(figsize=(12, 6))
+            pf.plot()
+            plt.title(f"{strategy_name} Equity Curve (Geoptimaliseerde Parameters)")
+            plt.savefig(output_path / f"{strategy_name}_{symbol}_optimized_equity.png")
+            plt.close()
 
-            # Check FTMO compliance
-            compliant, profit_reached = check_ftmo_compliance(pf, metrics)
+            if verbose:
+                logger.info(f"Verificatie backtest voltooid. Equity curve opgeslagen.")
 
-            # Optimaliseer op Sharpe Ratio, maar alleen als FTMO-compliant
-            if compliant and profit_reached:
-                compliant_count += 1
-                if metrics['sharpe_ratio'] > best_sharpe:
-                    best_sharpe = metrics['sharpe_ratio']
-                    best_params = params
-                    best_metrics = metrics
     finally:
-        # Zet log level terug naar origineel
+        # Herstel log level
         logger.setLevel(original_level)
 
-    # Print een lege regel om voortgangsindicator te wissen
-    print()
+    return {'top_results': top_results, 'total_combinations': total_combinations,
+        'compliant_count': compliant_count, 'time_taken': time.time() - start_time}
 
-    # Log samenvattend resultaat
+
+def validate_best_parameters(strategy_name, params, symbol=SYMBOL,
+                             output_dir=OUTPUT_DIR):
+    """
+    Voer een gedetailleerde backtest uit met de beste parameters om de resultaten te valideren.
+
+    Args:
+        strategy_name: Naam van de strategie
+        params: Dictionary met parameters
+        symbol: Trading symbool
+        output_dir: Map om resultaten op te slaan
+
+    Returns:
+        dict: Validatie resultaten
+    """
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True, parents=True)
+
+    # Haal historische data op
+    df = fetch_historical_data(symbol)
+    if df is None:
+        logger.error(f"Kon geen historische data ophalen voor {symbol}")
+        return None
+
+    # Maak strategie instantie met deze parameters
+    strategy = get_strategy(strategy_name, **params)
+
+    # Genereer signalen
+    entries, sl_stop, tp_stop = strategy.generate_signals(df)
+
+    # Voer backtest uit
+    pf = vbt.Portfolio.from_signals(close=df['close'], entries=entries, sl_stop=sl_stop,
+        tp_stop=tp_stop, init_cash=INITIAL_CAPITAL, fees=FEES, freq='1D')
+
+    # Bereken metrics
+    metrics = {'total_return': pf.total_return(), 'sharpe_ratio': pf.sharpe_ratio(),
+        'sortino_ratio': pf.sortino_ratio(), 'calmar_ratio': pf.calmar_ratio(),
+        'max_drawdown': pf.max_drawdown(),
+        'win_rate': pf.trades.win_rate() if len(pf.trades) > 0 else 0,
+        'trades_count': len(pf.trades)}
+
+    # Check FTMO compliance
+    compliant, profit_reached = check_ftmo_compliance(pf, metrics)
+
+    # Maak gedetailleerd rapport
     logger.info("\n" + "=" * 60)
-    logger.info(f"OPTIMALISATIE SAMENVATTING")
+    logger.info(f"VALIDATIE RESULTATEN VOOR {strategy_name}")
     logger.info("=" * 60)
-    logger.info(f"Totaal geteste combinaties: {tested_count}/{total_combinations}")
-    logger.info(
-        f"FTMO-compliant combinaties: {compliant_count} ({compliant_count / tested_count * 100:.1f}%)")
-    logger.info(f"Totale tijd: {time.time() - start_time:.1f} seconden")
+    logger.info("\nParameters:")
+    for param_name, param_value in params.items():
+        logger.info(f"  {param_name}: {param_value}")
 
-    # Log beste resultaat
-    if best_params is not None:
-        window, std_dev, sl_atr_mult, tp_atr_mult = best_params
-        logger.info("\nBESTE PARAMETERS:")
-        logger.info(f"  Window:      {window}")
-        logger.info(f"  Std Dev:     {std_dev}")
-        logger.info(f"  SL ATR Mult: {sl_atr_mult}")
-        logger.info(f"  TP ATR Mult: {tp_atr_mult}")
+    logger.info("\nPerformance Metrics:")
+    logger.info(f"  Return: {metrics['total_return']:.2%}")
+    logger.info(f"  Sharpe: {metrics['sharpe_ratio']:.2f}")
+    logger.info(f"  Sortino: {metrics['sortino_ratio']:.2f}")
+    logger.info(f"  Calmar: {metrics['calmar_ratio']:.2f}")
+    logger.info(f"  Drawdown: {metrics['max_drawdown']:.2%}")
+    logger.info(f"  Win Rate: {metrics['win_rate']:.2%}")
+    logger.info(f"  Trades: {metrics['trades_count']}")
 
-        logger.info("\nBESTE RESULTATEN:")
-        logger.info(f"  Return:      {best_metrics['total_return']:.2%}")
-        logger.info(f"  Sharpe:      {best_metrics['sharpe_ratio']:.2f}")
-        logger.info(f"  Drawdown:    {best_metrics['max_drawdown']:.2%}")
-        logger.info(f"  Win Rate:    {best_metrics['win_rate']:.2%}")
-        logger.info(f"  Trades:      {best_metrics['trades_count']}")
-    else:
-        logger.info("\nGeen FTMO-compliant parameters gevonden.")
+    logger.info("\nFTMO Compliance:")
+    logger.info(f"  Compliant: {'JA' if compliant else 'NEE'}")
+    logger.info(f"  Winstdoelstelling Behaald: {'JA' if profit_reached else 'NEE'}")
 
-    logger.info("=" * 60)
+    # Maak plots
+    # 1. Equity curve
+    plt.figure(figsize=(12, 6))
+    pf.plot()
+    plt.title(f"{strategy_name} Equity Curve (Gevalideerde Parameters)")
+    plt.savefig(output_path / f"{strategy_name}_{symbol}_validated_equity.png")
+    plt.close()
+
+    # 2. Drawdown plot
+    plt.figure(figsize=(12, 6))
+    pf.drawdown().plot()
+    plt.title(f"{strategy_name} Drawdowns")
+    plt.savefig(output_path / f"{strategy_name}_{symbol}_drawdowns.png")
+    plt.close()
+
+    # 3. Maandelijkse returns heatmap (indien beschikbaar)
+    try:
+        plt.figure(figsize=(12, 8))
+        monthly_returns = pf.returns().resample('M').sum()
+        monthly_returns = monthly_returns.to_frame()
+        plt.imshow([monthly_returns.values.flatten()], cmap='RdYlGn', aspect='auto')
+        plt.title(f"{strategy_name} Maandelijkse Returns")
+        plt.savefig(output_path / f"{strategy_name}_{symbol}_monthly_returns.png")
+        plt.close()
+    except Exception as e:
+        logger.warning(f"Kon geen maandelijkse returns heatmap maken: {str(e)}")
+
+    logger.info(f"\nValidatie plots opgeslagen in {output_path}")
+
+    # Sla gedetailleerde trade lijst op
+    try:
+        trades_file = output_path / f"{strategy_name}_{symbol}_trades.csv"
+        pf.trades.records_readable.to_csv(trades_file)
+        logger.info(f"Trade lijst opgeslagen in {trades_file}")
+    except Exception as e:
+        logger.warning(f"Kon trade lijst niet opslaan: {str(e)}")
+
+    return {'metrics': metrics, 'ftmo_compliant': compliant,
+        'profit_target_reached': profit_reached, 'portfolio': pf}
+
+
+def main():
+    """Command-line interface voor optimalisatie."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Sophy4 Strategie Optimizer")
+
+    parser.add_argument("--strategy", type=str, required=True,
+                        help="Naam van de strategie")
+    parser.add_argument("--symbol", type=str, default=SYMBOL,
+                        help=f"Trading symbool (default: {SYMBOL})")
+    parser.add_argument("--metric", type=str, default="sharpe_ratio",
+                        choices=["sharpe_ratio", "sortino_ratio", "calmar_ratio",
+                                 "total_return", "max_drawdown", "win_rate"],
+                        help="Metric om te optimaliseren (default: sharpe_ratio)")
+    parser.add_argument("--top_n", type=int, default=3,
+                        help="Aantal top resultaten (default: 3)")
+    parser.add_argument("--ftmo_only", action="store_true",
+                        help="Alleen FTMO compliant parameter sets")
+    parser.add_argument("--apply_best", action="store_true",
+                        help="Voer gedetailleerde validatie uit van beste parameter set")
+    parser.add_argument("--output_dir", type=str, default=str(OUTPUT_DIR),
+                        help=f"Output directory (default: {OUTPUT_DIR})")
+
+    args = parser.parse_args()
+
+    # Voer optimalisatie uit
+    results = optimize_strategy(strategy_name=args.strategy, symbol=args.symbol,
+        metric=args.metric, top_n=args.top_n, ftmo_compliant_only=args.ftmo_only,
+        output_dir=args.output_dir, verbose=True)
+
+    if results and args.apply_best and results['top_results']:
+        # Valideer de beste parameter set
+        best_params = results['top_results'][0]['params']
+        validate_best_parameters(strategy_name=args.strategy, params=best_params,
+            symbol=args.symbol, output_dir=args.output_dir)
 
 
 if __name__ == "__main__":
-    optimize_parameters()
+    main()

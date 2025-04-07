@@ -1,6 +1,8 @@
 # Sophy4/live/live_trading.py
 import MetaTrader5 as mt5
+
 from config import logger
+
 
 def execute_trade(symbol, price, sl, tp, size=1.0):
     if not mt5.initialize():
