@@ -1,0 +1,14 @@
+# .gitignore
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.sqlite3
+*.env
+*.venv/
+.env/
+.idea/
+.vscode/
+*.ipynb_checkpoints/
