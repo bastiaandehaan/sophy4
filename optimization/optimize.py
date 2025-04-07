@@ -18,6 +18,8 @@ from ftmo_compliance.ftmo_check import check_ftmo_compliance
 from config import SYMBOL, INITIAL_CAPITAL, FEES, OUTPUT_DIR, logger
 
 
+# Hier is een verbeterde versie voor de optimize_strategy functie:
+
 def optimize_strategy(strategy_name, symbol=SYMBOL, param_ranges=None, timeframe=None,
                       metric="sharpe_ratio", top_n=3, initial_capital=INITIAL_CAPITAL,
                       fees=FEES, period_days=1095, ftmo_compliant_only=False):
@@ -80,10 +82,22 @@ def optimize_strategy(strategy_name, symbol=SYMBOL, param_ranges=None, timeframe
             tp_stop_np = tp_stop.values if isinstance(tp_stop, pd.Series) else tp_stop
             close_np = df['close'].values
 
+            # Voeg sl_trail parameter toe als trailing stop is ingeschakeld
+            kwargs = {}
+            if hasattr(strategy, 'use_trailing_stop') and strategy.use_trailing_stop:
+                kwargs['sl_trail'] = True  # Activeer trailing stop volgens VectorBT docs
+
             # Voer backtest uit
-            pf = vbt.Portfolio.from_signals(close=close_np, entries=entries_np,
-                sl_stop=sl_stop_np, tp_stop=tp_stop_np, init_cash=initial_capital,
-                fees=fees, freq='1D')
+            pf = vbt.Portfolio.from_signals(
+                close=close_np,
+                entries=entries_np,
+                sl_stop=sl_stop_np,
+                tp_stop=tp_stop_np,
+                init_cash=initial_capital,
+                fees=fees,
+                freq='1D',
+                **kwargs
+            )
 
             # Bereken metrics
             metrics_dict = {'total_return': float(pf.total_return()),
@@ -92,7 +106,8 @@ def optimize_strategy(strategy_name, symbol=SYMBOL, param_ranges=None, timeframe
                 'calmar_ratio': float(pf.calmar_ratio()),
                 'max_drawdown': float(pf.max_drawdown()),
                 'win_rate': float(pf.trades.win_rate() if len(pf.trades) > 0 else 0),
-                'trades_count': len(pf.trades), 'profit_factor': float(
+                'trades_count': len(pf.trades),
+                'profit_factor': float(
                     pf.trades['pnl'].sum() / abs(
                         pf.trades['pnl'][pf.trades['pnl'] < 0].sum()) if len(
                         pf.trades[pf.trades['pnl'] < 0]) > 0 else float('inf'))}
@@ -140,6 +155,9 @@ def optimize_strategy(strategy_name, symbol=SYMBOL, param_ranges=None, timeframe
     logger.info(f"Resultaten opgeslagen in {results_file}")
 
     return top_results
+
+
+
 
 
 def walk_forward_test(strategy_name, symbol, params, period_days=1095, windows=5):
