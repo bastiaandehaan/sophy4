@@ -70,8 +70,8 @@ def optimize_strategy(strategy_name, symbol=SYMBOL, param_ranges=None,
         metrics_list.append(metric)
 
     # Haal historische data op
-    df = fetch_historical_data(symbol, days=period_days)
-    if df is None:
+    df_original = fetch_historical_data(symbol, days=period_days)
+    if df_original is None:
         logger.error(f"Kon geen historische data ophalen voor {symbol}")
         return None
 
@@ -114,24 +114,40 @@ def optimize_strategy(strategy_name, symbol=SYMBOL, param_ranges=None,
                 # Valideer parameters
                 strategy.validate_parameters()
 
+                # Maak kopie van dataframe voor deze iteratie
+                df = df_original.copy()
+
                 # Genereer signalen
                 entries, sl_stop, tp_stop = strategy.generate_signals(df)
 
-                # Voer backtest uit
-                pf = vbt.Portfolio.from_signals(close=df['close'], entries=entries,
+                # Zorg dat het Series objecten zijn (geen views)
+                entries = entries.copy() if isinstance(entries,
+                                                       pd.Series) else pd.Series(
+                    entries, index=df.index)
+                sl_stop = sl_stop.copy() if isinstance(sl_stop,
+                                                       pd.Series) else pd.Series(
+                    sl_stop, index=df.index)
+                tp_stop = tp_stop.copy() if isinstance(tp_stop,
+                                                       pd.Series) else pd.Series(
+                    tp_stop, index=df.index)
+                close = df['close'].copy()  # Maak expliciet kopie van close
+
+                # Voer backtest uit met kopieën
+                pf = vbt.Portfolio.from_signals(close=close, entries=entries,
                     sl_stop=sl_stop, tp_stop=tp_stop, init_cash=initial_capital,
                     fees=fees, freq='1D')
 
                 # Bereken performance metrics
                 metrics_dict = {'total_return': pf.total_return(),
-                    'sharpe_ratio': pf.sharpe_ratio(),
-                    'sortino_ratio': pf.sortino_ratio(),
-                    'calmar_ratio': pf.calmar_ratio(),
-                    'max_drawdown': pf.max_drawdown(),
-                    'win_rate': pf.trades.win_rate() if len(pf.trades) > 0 else 0,
-                    'trades_count': len(pf.trades),
-                    'avg_trade_duration': pf.trades['duration'].mean() if len(
-                        pf.trades) > 0 else 0}
+                                'sharpe_ratio': pf.sharpe_ratio(),
+                                'sortino_ratio': pf.sortino_ratio(),
+                                'calmar_ratio': pf.calmar_ratio(),
+                                'max_drawdown': pf.max_drawdown(),
+                                'win_rate': pf.trades.win_rate() if len(
+                                    pf.trades) > 0 else 0,
+                                'trades_count': len(pf.trades),
+                                'avg_trade_duration': pf.trades[
+                                    'duration'].mean() if len(pf.trades) > 0 else 0}
 
                 # Check FTMO compliance
                 compliant, profit_reached = check_ftmo_compliance(pf, metrics_dict)
@@ -140,8 +156,8 @@ def optimize_strategy(strategy_name, symbol=SYMBOL, param_ranges=None,
                 if not ftmo_compliant_only or (compliant and profit_reached):
                     compliant_count += 1
                     results.append({'params': param_dict, 'metrics': metrics_dict,
-                        'ftmo_compliant': compliant,
-                        'profit_target_reached': profit_reached})
+                                    'ftmo_compliant': compliant,
+                                    'profit_target_reached': profit_reached})
 
             except Exception as e:
                 if verbose:
@@ -195,12 +211,12 @@ def optimize_strategy(strategy_name, symbol=SYMBOL, param_ranges=None,
         results_file = output_path / f"{strategy_name}_{symbol}_optimization.json"
         with open(results_file, 'w') as f:
             json.dump({'strategy': strategy_name, 'symbol': symbol,
-                'total_combinations': total_combinations,
-                'ftmo_compliant_count': compliant_count,
-                'optimization_time': time.time() - start_time, 'top_results': [
+                       'total_combinations': total_combinations,
+                       'ftmo_compliant_count': compliant_count,
+                       'optimization_time': time.time() - start_time, 'top_results': [
                     {'params': result['params'],
-                        'metrics': {k: float(v) for k, v in result['metrics'].items()}}
-                    for result in top_results]}, f, indent=2)
+                     'metrics': {k: float(v) for k, v in result['metrics'].items()}} for
+                    result in top_results]}, f, indent=2)
 
         if verbose:
             logger.info(f"\nResultaten opgeslagen in {results_file}")
@@ -211,10 +227,22 @@ def optimize_strategy(strategy_name, symbol=SYMBOL, param_ranges=None,
             if verbose:
                 logger.info("\nVerifiëren van beste resultaat met aparte backtest...")
 
-            strategy = get_strategy(strategy_name, **best_params)
-            entries, sl_stop, tp_stop = strategy.generate_signals(df)
+            # Maak een nieuwe kopie van de data voor verificatie
+            df_verify = df_original.copy()
 
-            pf = vbt.Portfolio.from_signals(close=df['close'], entries=entries,
+            strategy = get_strategy(strategy_name, **best_params)
+            entries, sl_stop, tp_stop = strategy.generate_signals(df_verify)
+
+            # Converteer en kopieer data voor verificatie
+            entries = entries.copy() if isinstance(entries, pd.Series) else pd.Series(
+                entries, index=df_verify.index)
+            sl_stop = sl_stop.copy() if isinstance(sl_stop, pd.Series) else pd.Series(
+                sl_stop, index=df_verify.index)
+            tp_stop = tp_stop.copy() if isinstance(tp_stop, pd.Series) else pd.Series(
+                tp_stop, index=df_verify.index)
+            close = df_verify['close'].copy()
+
+            pf = vbt.Portfolio.from_signals(close=close, entries=entries,
                 sl_stop=sl_stop, tp_stop=tp_stop, init_cash=initial_capital, fees=fees,
                 freq='1D')
 
@@ -233,7 +261,7 @@ def optimize_strategy(strategy_name, symbol=SYMBOL, param_ranges=None,
         logger.setLevel(original_level)
 
     return {'top_results': top_results, 'total_combinations': total_combinations,
-        'compliant_count': compliant_count, 'time_taken': time.time() - start_time}
+            'compliant_count': compliant_count, 'time_taken': time.time() - start_time}
 
 
 def validate_best_parameters(strategy_name, params, symbol=SYMBOL,
@@ -254,10 +282,13 @@ def validate_best_parameters(strategy_name, params, symbol=SYMBOL,
     output_path.mkdir(exist_ok=True, parents=True)
 
     # Haal historische data op
-    df = fetch_historical_data(symbol)
-    if df is None:
+    df_original = fetch_historical_data(symbol)
+    if df_original is None:
         logger.error(f"Kon geen historische data ophalen voor {symbol}")
         return None
+
+    # Maak kopie voor deze validatie
+    df = df_original.copy()
 
     # Maak strategie instantie met deze parameters
     strategy = get_strategy(strategy_name, **params)
@@ -265,16 +296,25 @@ def validate_best_parameters(strategy_name, params, symbol=SYMBOL,
     # Genereer signalen
     entries, sl_stop, tp_stop = strategy.generate_signals(df)
 
+    # Zorg dat het Series objecten zijn (geen views)
+    entries = entries.copy() if isinstance(entries, pd.Series) else pd.Series(entries,
+                                                                              index=df.index)
+    sl_stop = sl_stop.copy() if isinstance(sl_stop, pd.Series) else pd.Series(sl_stop,
+                                                                              index=df.index)
+    tp_stop = tp_stop.copy() if isinstance(tp_stop, pd.Series) else pd.Series(tp_stop,
+                                                                              index=df.index)
+    close = df['close'].copy()
+
     # Voer backtest uit
-    pf = vbt.Portfolio.from_signals(close=df['close'], entries=entries, sl_stop=sl_stop,
+    pf = vbt.Portfolio.from_signals(close=close, entries=entries, sl_stop=sl_stop,
         tp_stop=tp_stop, init_cash=INITIAL_CAPITAL, fees=FEES, freq='1D')
 
     # Bereken metrics
     metrics = {'total_return': pf.total_return(), 'sharpe_ratio': pf.sharpe_ratio(),
-        'sortino_ratio': pf.sortino_ratio(), 'calmar_ratio': pf.calmar_ratio(),
-        'max_drawdown': pf.max_drawdown(),
-        'win_rate': pf.trades.win_rate() if len(pf.trades) > 0 else 0,
-        'trades_count': len(pf.trades)}
+               'sortino_ratio': pf.sortino_ratio(), 'calmar_ratio': pf.calmar_ratio(),
+               'max_drawdown': pf.max_drawdown(),
+               'win_rate': pf.trades.win_rate() if len(pf.trades) > 0 else 0,
+               'trades_count': len(pf.trades)}
 
     # Check FTMO compliance
     compliant, profit_reached = check_ftmo_compliance(pf, metrics)
@@ -338,7 +378,7 @@ def validate_best_parameters(strategy_name, params, symbol=SYMBOL,
         logger.warning(f"Kon trade lijst niet opslaan: {str(e)}")
 
     return {'metrics': metrics, 'ftmo_compliant': compliant,
-        'profit_target_reached': profit_reached, 'portfolio': pf}
+            'profit_target_reached': profit_reached, 'portfolio': pf}
 
 
 def main():
@@ -368,14 +408,15 @@ def main():
 
     # Voer optimalisatie uit
     results = optimize_strategy(strategy_name=args.strategy, symbol=args.symbol,
-        metric=args.metric, top_n=args.top_n, ftmo_compliant_only=args.ftmo_only,
-        output_dir=args.output_dir, verbose=True)
+                                metric=args.metric, top_n=args.top_n,
+                                ftmo_compliant_only=args.ftmo_only,
+                                output_dir=args.output_dir, verbose=True)
 
     if results and args.apply_best and results['top_results']:
         # Valideer de beste parameter set
         best_params = results['top_results'][0]['params']
         validate_best_parameters(strategy_name=args.strategy, params=best_params,
-            symbol=args.symbol, output_dir=args.output_dir)
+                                 symbol=args.symbol, output_dir=args.output_dir)
 
 
 if __name__ == "__main__":
