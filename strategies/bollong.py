@@ -1,12 +1,13 @@
 # strategies/bollong.py
-import pandas as pd
-import numpy as np
 from typing import Tuple
 
+import pandas as pd
+
 from config import logger
+from utils.indicator_utils import calculate_bollinger_bands
 from . import register_strategy  # Relatieve import om circulariteit te vermijden
 from .base_strategy import BaseStrategy
-from utils.indicator_utils import calculate_bollinger_bands
+
 
 def calculate_atr(df: pd.DataFrame, window: int = 14) -> Tuple[pd.Series, pd.Series]:
     high = df['high']

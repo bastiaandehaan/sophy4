@@ -1,14 +1,13 @@
 # optimization/optimize.py
 import argparse
 import json
+import logging
 import sys
 import time
-import logging
+from datetime import datetime
 from itertools import product
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
 import vectorbt as vbt
 from tqdm import tqdm
 
@@ -27,21 +26,36 @@ import MetaTrader5 as mt5
 
 
 def optimize_strategy(strategy_name, symbol=SYMBOL, symbols=None, timeframe=None,
-        metric="sharpe_ratio", top_n=3, initial_capital=INITIAL_CAPITAL, fees=FEES,
-        period_days=1095, ftmo_compliant_only=False, full_analysis=False,
-        monte_carlo=False):
+                      metric="sharpe_ratio", top_n=3, initial_capital=INITIAL_CAPITAL,
+                      fees=FEES, period_days=1095, ftmo_compliant_only=False,
+                      full_analysis=False, monte_carlo=False):
     # Als symbols niet expliciet gegeven, gebruik de standaard symbol
     if symbols is None:
         symbols = [symbol]
 
     # Initialiseer timeframe mapping
     tf_map = {'M1': mt5.TIMEFRAME_M1, 'M5': mt5.TIMEFRAME_M5, 'M15': mt5.TIMEFRAME_M15,
-        'M30': mt5.TIMEFRAME_M30, 'H1': mt5.TIMEFRAME_H1, 'H4': mt5.TIMEFRAME_H4,
-        'D1': mt5.TIMEFRAME_D1, 'W1': mt5.TIMEFRAME_W1}
+              'M30': mt5.TIMEFRAME_M30, 'H1': mt5.TIMEFRAME_H1, 'H4': mt5.TIMEFRAME_H4,
+              'D1': mt5.TIMEFRAME_D1, 'W1': mt5.TIMEFRAME_W1}
+
+    # Reverse mapping voor bestandsnaamgeving
+    tf_reverse_map = {mt5.TIMEFRAME_M1: 'M1', mt5.TIMEFRAME_M5: 'M5',
+                      mt5.TIMEFRAME_M15: 'M15', mt5.TIMEFRAME_M30: 'M30',
+                      mt5.TIMEFRAME_H1: 'H1', mt5.TIMEFRAME_H4: 'H4',
+                      mt5.TIMEFRAME_D1: 'D1', mt5.TIMEFRAME_W1: 'W1'}
 
     # Converteer timeframe indien string
+    numeric_timeframe = None
     if isinstance(timeframe, str):
-        timeframe = tf_map.get(timeframe, mt5.TIMEFRAME_D1)
+        numeric_timeframe = tf_map.get(timeframe, mt5.TIMEFRAME_D1)
+        timeframe_name = timeframe  # bewaar originele string voor bestandsnaam
+    else:
+        numeric_timeframe = timeframe
+        timeframe_name = tf_reverse_map.get(timeframe,
+                                            'unknown')  # converteer nummer naar naam
+
+    # Datum voor bestandsnaam
+    current_date = datetime.now().strftime("%Y%m%d")
 
     # Resultaten voor alle symbolen
     all_symbol_results = {}
@@ -60,7 +74,7 @@ def optimize_strategy(strategy_name, symbol=SYMBOL, symbols=None, timeframe=None
         param_ranges = strategy_class.get_default_params()
 
         # Data ophalen
-        df = fetch_historical_data(current_symbol, timeframe=timeframe,
+        df = fetch_historical_data(current_symbol, timeframe=numeric_timeframe,
                                    days=period_days)
         if df is None:
             print(f"Geen data voor {current_symbol}")
@@ -93,15 +107,16 @@ def optimize_strategy(strategy_name, symbol=SYMBOL, symbols=None, timeframe=None
 
                     # Portfolio aanmaken
                     portfolio_kwargs = {'close': df['close'], 'entries': entries,
-                        'sl_stop': sl_stop, 'tp_stop': tp_stop,
-                        'init_cash': initial_capital, 'fees': fees, 'freq': '1D'}
+                                        'sl_stop': sl_stop, 'tp_stop': tp_stop,
+                                        'init_cash': initial_capital, 'fees': fees,
+                                        'freq': '1D'}
 
                     pf = vbt.Portfolio.from_signals(**portfolio_kwargs)
 
                     # Bereken metrics
                     metrics_dict = {'total_return': float(pf.total_return()),
-                        'sharpe_ratio': float(pf.sharpe_ratio()),
-                        'max_drawdown': float(pf.max_drawdown()), }
+                                    'sharpe_ratio': float(pf.sharpe_ratio()),
+                                    'max_drawdown': float(pf.max_drawdown()), }
 
                     # Controleer FTMO-compliance als gevraagd
                     if ftmo_compliant_only:
@@ -124,9 +139,8 @@ def optimize_strategy(strategy_name, symbol=SYMBOL, symbols=None, timeframe=None
                                 reverse=metric not in ['max_drawdown'])
         top_results = sorted_results[:top_n]
 
-        # Sla resultaten op
-        timeframe_str = f"_{timeframe}" if timeframe else ""
-        results_file = output_path / f"{strategy_name}_{current_symbol}{timeframe_str}_optimized.json"
+        # Verbeterde bestandsnamen met duidelijke componenten: strategie_symbool_timeframe_metric_datum.json
+        results_file = output_path / f"{strategy_name}_{current_symbol}_{timeframe_name}_{metric}_{current_date}_optimized.json"
         with open(results_file, 'w') as f:
             json.dump(top_results, f, indent=2)
 
@@ -174,10 +188,12 @@ def main():
 
     # Voer optimalisatie uit
     results = optimize_strategy(strategy_name=args.strategy, symbols=symbols,
-        timeframe=args.timeframe, metric=args.metric, top_n=args.top_n,
-        initial_capital=args.initial_capital, fees=args.fees,
-        period_days=args.period_days, ftmo_compliant_only=args.ftmo_only,
-        full_analysis=args.full_analysis, monte_carlo=args.monte_carlo)
+                                timeframe=args.timeframe, metric=args.metric,
+                                top_n=args.top_n, initial_capital=args.initial_capital,
+                                fees=args.fees, period_days=args.period_days,
+                                ftmo_compliant_only=args.ftmo_only,
+                                full_analysis=args.full_analysis,
+                                monte_carlo=args.monte_carlo)
 
     # Print de top resultaten
     for symbol, symbol_results in results.items():

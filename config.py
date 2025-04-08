@@ -1,10 +1,17 @@
-# Sophy4/config.py
 import logging
 from pathlib import Path
 
-# Logging configuratie
-logging.basicConfig(level=logging.INFO,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+# Logging configuratie met bestand
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(exist_ok=True, parents=True)
+LOG_FILE = LOG_DIR / "sophy4_backtest.log"
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    filename=LOG_FILE,  # Logs naar een bestand schrijven
+    filemode='a'        # Append-modus (voegt toe aan bestaand bestand)
+)
 logger = logging.getLogger()
 
 # FTMO limieten
