@@ -25,3 +25,9 @@ SYMBOL = "GER40.cash"
 FEES = 0.0002  # 0.02%
 OUTPUT_DIR = Path("results")
 OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
+
+# Add this after your existing logger setup
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(console_handler)

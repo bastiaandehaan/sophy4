@@ -155,7 +155,8 @@ def get_cached_data(symbol: str, timeframe: str, bars: int = 200) -> Optional[pd
     refresh_interval = TIMEFRAME_INTERVALS.get(timeframe, timedelta(hours=1))
     if (cache_key not in data_cache or
             datetime.now() - data_cache[cache_key]['timestamp'] >= refresh_interval):
-        df = fetch_historical_data(symbol, timeframe=timeframe, bars=bars)
+        df = fetch_historical_data(symbol, timeframe)
+
         if df is not None and not df.empty:
             data_cache[cache_key] = {'data': df, 'timestamp': datetime.now()}
     return data_cache.get(cache_key, {}).get('data')
