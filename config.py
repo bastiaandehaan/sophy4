@@ -3,13 +3,14 @@ import logging
 from pathlib import Path
 
 # Logging configuratie
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger()
 
 # FTMO limieten
 MAX_DAILY_LOSS = 0.05  # 5%
 MAX_TOTAL_LOSS = 0.10  # 10%
-PROFIT_TARGET = 0.10   # 10%
+PROFIT_TARGET = 0.10  # 10%
 
 # Standaardparameters
 INITIAL_CAPITAL = 10000.0

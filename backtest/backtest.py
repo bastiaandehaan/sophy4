@@ -27,9 +27,6 @@ def run_backtest(df: pd.DataFrame, symbol: str, strategy_params: Dict = None) ->
         if not all(col in df.columns for col in required_cols):
             raise ValueError(f"DataFrame mist vereiste kolommen: {required_cols}")
 
-        # Haal trailing stop parameter op (indien aanwezig)
-        sl_trail = strategy_params.get('sl_trail', False) if strategy_params else False
-
         # Stel positiegrootte in op basis van risk_per_trade (indien meegegeven)
         size = None
         if strategy_params and 'risk_per_trade' in strategy_params:
@@ -40,17 +37,22 @@ def run_backtest(df: pd.DataFrame, symbol: str, strategy_params: Dict = None) ->
                 logger.warning(f"Aantal signalen overschrijdt max_positions ({strategy_params.get('max_positions')})")
 
         # Voer backtest uit
-        pf = vbt.Portfolio.from_signals(
-            close=df['close'],
-            entries=df['entries'],
-            sl_stop=df['sl_stop'],
-            tp_stop=df['tp_stop'],
-            sl_trail=sl_trail,  # Ondersteun trailing stops
-            init_cash=INITIAL_CAPITAL,
-            fees=FEES,
-            freq='1D',
-            size=size  # Dynamische positiegrootte
-        )
+        portfolio_kwargs = {
+            'close': df['close'],
+            'entries': df['entries'],
+            'sl_stop': df['sl_stop'],
+            'tp_stop': df['tp_stop'],
+            'init_cash': INITIAL_CAPITAL,
+            'fees': FEES,
+            'freq': '1D'
+        }
+
+        # Indien size parameter gebruikt wordt:
+        if size is not None:
+            portfolio_kwargs['size'] = size
+
+        # NIET direct toevoegen: sl_trail=...
+        pf = vbt.Portfolio.from_signals(**portfolio_kwargs)
 
         # Bereken metrics
         metrics = {

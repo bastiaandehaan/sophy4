@@ -23,8 +23,8 @@ vbt.settings.array_wrapper['freq'] = '5m'  # Dagelijkse data frequentie
 
 # Configuratie voor logging
 logging.basicConfig(level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[logging.StreamHandler()])
+                    format='%(asctime)s - %(levelname)s - %(message)s',
+                    handlers=[logging.StreamHandler()])
 logger = logging.getLogger()
 
 # FTMO limieten
@@ -50,11 +50,13 @@ def calculate_atr(data, window=14):
 
 
 def test_long_only_strategy(symbol='GER40.cash', window=50, std_dev=2.0,
-        sl_method='fixed_percent', tp_method='atr_based', sl_fixed=0.02, tp_fixed=0.03,
-        sl_atr_mult=2.0, tp_atr_mult=3.0, period_days=1095, initial_capital=10000.0,
-        output_dir='results', end_date=None, show_trades=True, exact_dates=False,
-        fees=0.0002  # Pas dit aan om commissie en slippage te wijzigen
-):
+                            sl_method='fixed_percent', tp_method='atr_based',
+                            sl_fixed=0.02, tp_fixed=0.03, sl_atr_mult=2.0,
+                            tp_atr_mult=3.0, period_days=1095, initial_capital=10000.0,
+                            output_dir='results', end_date=None, show_trades=True,
+                            exact_dates=False, fees=0.0002
+                            # Pas dit aan om commissie en slippage te wijzigen
+                            ):
     """
     Test een Bollinger Band breakout strategie (alleen LONG signalen) voor FTMO compliance.
 
@@ -149,19 +151,20 @@ def test_long_only_strategy(symbol='GER40.cash', window=50, std_dev=2.0,
 
     # 8. Voer backtest uit - ALLEEN LONG posities
     pf = vbt.Portfolio.from_signals(close=df['close'], entries=df['entries'],
-        exits=None,  # We gebruiken SL/TP voor exits
-        # direction niet nodig voor long-only (standaard is long)
-        sl_stop=df['sl_stop'], tp_stop=df['tp_stop'], size=None,  # Auto-size
-        size_type='value', init_cash=initial_capital, freq='1D',
-        # Expliciet specificeren
-        fees=fees  # Commissie + slippage
-    )
+                                    exits=None,  # We gebruiken SL/TP voor exits
+                                    # direction niet nodig voor long-only (standaard is long)
+                                    sl_stop=df['sl_stop'], tp_stop=df['tp_stop'],
+                                    size=None,  # Auto-size
+                                    size_type='value', init_cash=initial_capital,
+                                    freq='1D', # Expliciet specificeren
+                                    fees=fees  # Commissie + slippage
+                                    )
 
     # 9. Bereken performance metrics
     metrics = {'total_return': pf.total_return(), 'sharpe_ratio': pf.sharpe_ratio(),
-        'max_drawdown': pf.max_drawdown(),
-        'win_rate': pf.trades.win_rate() if len(pf.trades) > 0 else 0,
-        'trades_count': len(pf.trades)}
+               'max_drawdown': pf.max_drawdown(),
+               'win_rate': pf.trades.win_rate() if len(pf.trades) > 0 else 0,
+               'trades_count': len(pf.trades)}
 
     logger.info(f"Backtest resultaten voor {symbol} (LONG-ONLY):")
     logger.info(
@@ -305,7 +308,7 @@ def test_long_only_strategy(symbol='GER40.cash', window=50, std_dev=2.0,
 
     # 14. Eindresultaat
     return {'success': True, 'metrics': metrics, 'ftmo_compliant': overall_compliant,
-        'recommendation': recommendation, 'safe_for_ftmo': safe_for_ftmo}
+            'recommendation': recommendation, 'safe_for_ftmo': safe_for_ftmo}
 
 
 def main():
@@ -352,12 +355,17 @@ def main():
 
     # Run test
     results = test_long_only_strategy(symbol=args.symbol, window=args.window,
-        std_dev=args.std_dev, sl_method=args.sl_method, tp_method=args.tp_method,
-        sl_fixed=args.sl_fixed, tp_fixed=args.tp_fixed, sl_atr_mult=args.sl_atr_mult,
-        tp_atr_mult=args.tp_atr_mult, period_days=args.period,
-        initial_capital=args.capital, output_dir=args.output_dir,
-        end_date=args.end_date, show_trades=args.show_trades,
-        exact_dates=args.exact_dates, fees=args.fees)
+                                      std_dev=args.std_dev, sl_method=args.sl_method,
+                                      tp_method=args.tp_method, sl_fixed=args.sl_fixed,
+                                      tp_fixed=args.tp_fixed,
+                                      sl_atr_mult=args.sl_atr_mult,
+                                      tp_atr_mult=args.tp_atr_mult,
+                                      period_days=args.period,
+                                      initial_capital=args.capital,
+                                      output_dir=args.output_dir,
+                                      end_date=args.end_date,
+                                      show_trades=args.show_trades,
+                                      exact_dates=args.exact_dates, fees=args.fees)
 
     if results['success']:
         print(f"\n====== SAMENVATTING VOOR {args.symbol} (LONG-ONLY) ======")

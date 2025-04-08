@@ -9,8 +9,9 @@ def test_extended_params():
 
     # Test met aangepaste parameters
     strategy2 = get_strategy("BollongStrategy", window=40, std_dev=2.5,
-        sl_method="fixed_percent", sl_fixed_percent=0.025, tp_method="atr_based",
-        tp_atr_mult=4.0, use_trailing_stop=True, trailing_stop_percent=0.02)
+                             sl_method="fixed_percent", sl_fixed_percent=0.025,
+                             tp_method="atr_based", tp_atr_mult=4.0,
+                             use_trailing_stop=True, trailing_stop_percent=0.02)
     print(f"Strategie geïnstantieerd met aangepaste parameters:")
     print(f"  Window: {strategy2.window}")
     print(f"  Stop-loss: {strategy2.sl_method} ({strategy2.sl_fixed_percent})")

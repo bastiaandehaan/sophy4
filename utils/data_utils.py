@@ -24,6 +24,7 @@ def fetch_historical_data(symbol, timeframe=mt5.TIMEFRAME_D1, days=1095, end_dat
     logger.info(f"Historische data geladen: {len(df)} rijen")
     return df
 
+
 def fetch_live_data(symbol, timeframe=mt5.TIMEFRAME_D1):
     if not mt5.initialize():
         logger.error("MT5 initialisatie mislukt")

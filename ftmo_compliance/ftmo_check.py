@@ -1,6 +1,7 @@
 # Sophy4/ftmo_compliance/ftmo_check.py
 from config import MAX_DAILY_LOSS, MAX_TOTAL_LOSS, PROFIT_TARGET, logger
 
+
 def check_ftmo_compliance(pf, metrics):
     daily_returns = pf.returns()
     daily_loss_violated = abs(daily_returns.min()) > MAX_DAILY_LOSS

@@ -8,49 +8,8 @@ import pandas as pd
 from config import logger
 
 
-def execute_trade(symbol: str, price: float, sl: float, tp: float, size: float = 1.0,
-                  retry_attempts: int = 3, retry_delay: float = 2.0) -> bool:
-    """Voer een trade uit via MetaTrader 5."""
-    if not mt5.initialize():
-        logger.error(f"MT5 initialisatie mislukt: {mt5.last_error()}")
-        return False
-
-    symbol_info = mt5.symbol_info(symbol)
-    if symbol_info is None:
-        logger.error(f"Symbool {symbol} niet gevonden in MT5")
-        return False
-
-    if not symbol_info.visible:
-        mt5.symbol_select(symbol, True)
-        logger.info(f"Symbool {symbol} toegevoegd aan MarketWatch")
-
-    request = {"action": mt5.TRADE_ACTION_DEAL, "symbol": symbol, "volume": size,
-        "type": mt5.ORDER_TYPE_BUY, "price": price, "sl": sl, "tp": tp, "magic": 123456,
-        "comment": "Sophy4_Bollong", "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC, }
-
-    for attempt in range(1, retry_attempts + 1):
-        result = mt5.order_send(request)
-        if result.retcode == mt5.TRADE_RETCODE_DONE:
-            logger.info(
-                f"Trade uitgevoerd: {symbol} @ {price}, SL={sl}, TP={tp}, Volume={size}, Ticket={result.order}")
-            return True
-        elif result.retcode == mt5.TRADE_RETCODE_REQUOTE:
-            new_price = mt5.symbol_info_tick(symbol).ask
-            logger.warning(f"Requote: nieuwe prijs {new_price} (was {price})")
-            request["price"] = new_price
-        else:
-            logger.error(
-                f"Trade mislukt (poging {attempt}): {result.comment}, code: {result.retcode}")
-            if attempt < retry_attempts:
-                time.sleep(retry_delay)
-
-    return False
-
-
 def run_live_trading(df: pd.DataFrame, symbol: str, use_trailing_stop: bool = False,
-                     risk_per_trade: float = 0.01, max_positions: int = 3) -> Dict[
-    str, Union[bool, float, str]]:
+                     risk_per_trade: float = 0.01, max_positions: int = 3) -> Dict[str, Union[bool, float, str]]:
     """Voer live trading uit op basis van signalen."""
     result = {"success": False, "trade_executed": False, "symbol": symbol,
         "timestamp": pd.Timestamp.now(), "message": "", "ticket": None}
@@ -107,21 +66,28 @@ def run_live_trading(df: pd.DataFrame, symbol: str, use_trailing_stop: bool = Fa
 
         contract_size = symbol_info.trade_contract_size
         lot_step = symbol_info.volume_step
-        calculated_size = risk_amount / (
-                    price_risk * contract_size) if price_risk > 0 else symbol_info.volume_min
+        calculated_size = risk_amount / (price_risk * contract_size) if price_risk > 0 else symbol_info.volume_min
         size = max(round(calculated_size / lot_step) * lot_step, symbol_info.volume_min)
 
         # Voer trade uit
+        portfolio_kwargs = {
+            'close': df['close'],
+            'entries': df['entries'],
+            'sl_stop': df['sl_stop'],
+            'tp_stop': df['tp_stop'],
+            'init_cash': account_info.balance,
+            'fees': 0.0002,  # Standaard commissie
+            'freq': '1D'
+        }
+
         trade_result = execute_trade(symbol, current_price, sl_price, tp_price, size)
         if trade_result:
             result["success"] = True
             result["trade_executed"] = True
-            result[
-                "message"] = f"Trade uitgevoerd: {symbol} @ {current_price}, SL={sl_price}, TP={tp_price}, Size={size}"
+            result["message"] = f"Trade uitgevoerd: {symbol} @ {current_price}, SL={sl_price}, TP={tp_price}, Size={size}"
             result.update({"entry_price": current_price, "sl_price": sl_price,
                 "tp_price": tp_price, "position_size": size, "risk_amount": risk_amount,
-                "ticket": mt5.positions_get(symbol=symbol)[
-                    0].ticket if mt5.positions_get(symbol=symbol) else None})
+                "ticket": mt5.positions_get(symbol=symbol)[0].ticket if mt5.positions_get(symbol=symbol) else None})
             logger.info(f"LIVE TRADE: {result['message']}")
 
             # Trailing stop logica (handmatig)
@@ -132,11 +98,52 @@ def run_live_trading(df: pd.DataFrame, symbol: str, use_trailing_stop: bool = Fa
         else:
             result["message"] = "Trade uitvoering mislukt"
 
+        return result
+
     except Exception as e:
         result["message"] = f"Fout tijdens live trading: {str(e)}"
         logger.exception("Live trading fout")
+        return result
 
-    return result
+
+def execute_trade(symbol: str, price: float, sl: float, tp: float, size: float = 1.0,
+                  retry_attempts: int = 3, retry_delay: float = 2.0) -> bool:
+    """Voer een trade uit via MetaTrader 5."""
+    if not mt5.initialize():
+        logger.error(f"MT5 initialisatie mislukt: {mt5.last_error()}")
+        return False
+
+    symbol_info = mt5.symbol_info(symbol)
+    if symbol_info is None:
+        logger.error(f"Symbool {symbol} niet gevonden in MT5")
+        return False
+
+    if not symbol_info.visible:
+        mt5.symbol_select(symbol, True)
+        logger.info(f"Symbool {symbol} toegevoegd aan MarketWatch")
+
+    request = {"action": mt5.TRADE_ACTION_DEAL, "symbol": symbol, "volume": size,
+        "type": mt5.ORDER_TYPE_BUY, "price": price, "sl": sl, "tp": tp, "magic": 123456,
+        "comment": "Sophy4_Bollong", "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC}
+
+    for attempt in range(1, retry_attempts + 1):
+        result = mt5.order_send(request)
+        if result.retcode == mt5.TRADE_RETCODE_DONE:
+            logger.info(
+                f"Trade uitgevoerd: {symbol} @ {price}, SL={sl}, TP={tp}, Volume={size}, Ticket={result.order}")
+            return True
+        elif result.retcode == mt5.TRADE_RETCODE_REQUOTE:
+            new_price = mt5.symbol_info_tick(symbol).ask
+            logger.warning(f"Requote: nieuwe prijs {new_price} (was {price})")
+            request["price"] = new_price
+        else:
+            logger.error(
+                f"Trade mislukt (poging {attempt}): {result.comment}, code: {result.retcode}")
+            if attempt < retry_attempts:
+                time.sleep(retry_delay)
+
+    return False
 
 
 def check_positions(symbols: List[str] = None) -> List[Dict]:
@@ -152,10 +159,8 @@ def check_positions(symbols: List[str] = None) -> List[Dict]:
 
     position_info = []
     for pos in positions:
-        pnl_percent = ((
-                                   pos.price_current / pos.price_open) - 1) * 100 if pos.type == 0 else (
-                                                                                                                    (
-                                                                                                                                pos.price_open / pos.price_current) - 1) * 100
+        pnl_percent = ((pos.price_current / pos.price_open) - 1) * 100 if pos.type == 0 else (
+                (pos.price_open / pos.price_current) - 1) * 100
         position_info.append({"symbol": pos.symbol, "ticket": pos.ticket,
             "type": "BUY" if pos.type == 0 else "SELL", "volume": pos.volume,
             "open_price": pos.price_open, "current_price": pos.price_current,
@@ -207,14 +212,12 @@ def close_position(ticket: int) -> bool:
 
     position = position[0]
     order_type = mt5.ORDER_TYPE_SELL if position.type == 0 else mt5.ORDER_TYPE_BUY
-    price = mt5.symbol_info_tick(
-        position.symbol).bid if position.type == 0 else mt5.symbol_info_tick(
-        position.symbol).ask
+    price = mt5.symbol_info_tick(position.symbol).bid if position.type == 0 else mt5.symbol_info_tick(position.symbol).ask
 
     request = {"action": mt5.TRADE_ACTION_DEAL, "symbol": position.symbol,
         "volume": position.volume, "type": order_type, "position": ticket,
         "price": price, "magic": position.magic, "comment": "Sophy4_Close",
-        "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC, }
+        "type_time": mt5.ORDER_TIME_GTC, "type_filling": mt5.ORDER_FILLING_IOC}
 
     result = mt5.order_send(request)
     if result.retcode != mt5.TRADE_RETCODE_DONE:

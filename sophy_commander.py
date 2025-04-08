@@ -21,7 +21,7 @@ def run_full_analysis(strategy, symbols=None, timeframes=None, monte_carlo=False
 
     if timeframes is None:
         timeframes = {'H1': mt5.TIMEFRAME_H1, 'H4': mt5.TIMEFRAME_H4,
-            'D1': mt5.TIMEFRAME_D1}
+                      'D1': mt5.TIMEFRAME_D1}
 
     results = {}
 
@@ -35,8 +35,8 @@ def run_full_analysis(strategy, symbols=None, timeframes=None, monte_carlo=False
             # Optimalisatie
             logger.info("1. Parameter optimalisatie...")
             optim_results = optimize_strategy(strategy_name=strategy, symbol=symbol,
-                timeframe=tf_value, metric="sharpe_ratio", top_n=3,
-                ftmo_compliant_only=True)
+                                              timeframe=tf_value, metric="sharpe_ratio",
+                                              top_n=3, ftmo_compliant_only=True)
 
             if not optim_results:
                 logger.error(f"Geen optimalisatie resultaten voor {symbol} {tf_name}")
@@ -49,12 +49,14 @@ def run_full_analysis(strategy, symbols=None, timeframes=None, monte_carlo=False
             # Walk-forward test
             logger.info("2. Walk-forward validatie...")
             wf_results = walk_forward_test(strategy_name=strategy, symbol=symbol,
-                params=best_params, period_days=1095)
+                                           params=best_params, period_days=1095)
 
             # Gedetailleerde backtest
             logger.info("3. Uitgebreide backtest...")
             pf, backtest_metrics = run_extended_backtest(strategy_name=strategy,
-                parameters=best_params, symbol=symbol, timeframe=tf_value)
+                                                         parameters=best_params,
+                                                         symbol=symbol,
+                                                         timeframe=tf_value)
 
             # Monte Carlo analyse
             mc_results = None
@@ -65,8 +67,9 @@ def run_full_analysis(strategy, symbols=None, timeframes=None, monte_carlo=False
 
             # Bewaar resultaten
             symbol_results[tf_name] = {'parameters': best_params,
-                'metrics': backtest_metrics, 'walk_forward': wf_results,
-                'monte_carlo': mc_results}
+                                       'metrics': backtest_metrics,
+                                       'walk_forward': wf_results,
+                                       'monte_carlo': mc_results}
 
         # Bewaar resultaten per symbool
         results[symbol] = symbol_results
@@ -141,8 +144,8 @@ def main():
 
     # Timeframes vertalen naar MT5 constantes
     tf_map = {'M1': mt5.TIMEFRAME_M1, 'M5': mt5.TIMEFRAME_M5, 'M15': mt5.TIMEFRAME_M15,
-        'M30': mt5.TIMEFRAME_M30, 'H1': mt5.TIMEFRAME_H1, 'H4': mt5.TIMEFRAME_H4,
-        'D1': mt5.TIMEFRAME_D1, 'W1': mt5.TIMEFRAME_W1}
+              'M30': mt5.TIMEFRAME_M30, 'H1': mt5.TIMEFRAME_H1, 'H4': mt5.TIMEFRAME_H4,
+              'D1': mt5.TIMEFRAME_D1, 'W1': mt5.TIMEFRAME_W1}
     timeframes = {tf: tf_map.get(tf, mt5.TIMEFRAME_D1) for tf in args.timeframes}
 
     # Parameters ophalen indien nodig
@@ -175,8 +178,8 @@ def main():
             for tf_name, tf_value in timeframes.items():
                 logger.info(f"Optimaliseren voor {symbol} ({tf_name})...")
                 results = optimize_strategy(strategy_name=args.strategy, symbol=symbol,
-                    timeframe=tf_value, metric="sharpe_ratio", top_n=3,
-                    ftmo_compliant_only=True)
+                                            timeframe=tf_value, metric="sharpe_ratio",
+                                            top_n=3, ftmo_compliant_only=True)
 
     elif args.backtest:
         if not parameters:
@@ -191,7 +194,8 @@ def main():
             for tf_name, tf_value in timeframes.items():
                 logger.info(f"Backtest voor {symbol} ({tf_name})...")
                 pf, metrics = run_extended_backtest(strategy_name=args.strategy,
-                    parameters=parameters, symbol=symbol, timeframe=tf_value)
+                                                    parameters=parameters,
+                                                    symbol=symbol, timeframe=tf_value)
 
     elif args.walk_forward:
         if not parameters:
@@ -205,7 +209,7 @@ def main():
         for symbol in args.symbols:
             logger.info(f"Walk-forward test voor {symbol}...")
             walk_forward_test(strategy_name=args.strategy, symbol=symbol,
-                params=parameters, period_days=1095)
+                              params=parameters, period_days=1095)
 
     elif args.multi_instrument:
         if not parameters:
@@ -217,13 +221,13 @@ def main():
             logger.info(
                 f"Multi-instrument test voor {args.strategy} op timeframe {tf_name}...")
             multi_instrument_test(strategy_name=args.strategy, parameters=parameters,
-                instruments=args.symbols, timeframe=tf_value)
+                                  instruments=args.symbols, timeframe=tf_value)
 
     else:
         # Default: volledige analyse
         logger.info(f"Volledige analyse voor {args.strategy}...")
         run_full_analysis(strategy=args.strategy, symbols=args.symbols,
-            timeframes=timeframes, monte_carlo=args.monte_carlo)
+                          timeframes=timeframes, monte_carlo=args.monte_carlo)
 
     # Afsluiten
     mt5.shutdown()

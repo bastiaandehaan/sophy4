@@ -66,11 +66,11 @@ def monitor_performance(pf=None, live=False, symbols=None, time_filter=False,
         elif pf:
             equity = pf.value()
             metrics = {"equity": round(equity.iloc[-1], 2),
-                "total_return": round(pf.total_return() * 100, 2),
-                "sharpe_ratio": round(pf.sharpe_ratio(), 2),
-                "max_drawdown": round(pf.max_drawdown() * 100, 2),
-                "win_rate": round(pf.trades.win_rate() * 100, 2) if len(
-                    pf.trades) > 0 else 0}
+                       "total_return": round(pf.total_return() * 100, 2),
+                       "sharpe_ratio": round(pf.sharpe_ratio(), 2),
+                       "max_drawdown": round(pf.max_drawdown() * 100, 2),
+                       "win_rate": round(pf.trades.win_rate() * 100, 2) if len(
+                           pf.trades) > 0 else 0}
             summary["metrics"] = metrics
             logger.info(
                 f"Backtest: Equity={metrics['equity']:.2f}, Return={metrics['total_return']}%")

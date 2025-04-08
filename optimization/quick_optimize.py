@@ -24,14 +24,9 @@ def quick_optimize(strategy_name, symbol=SYMBOL, top_n=3, period_days=1095):
     print(f"--- QUICK OPTIMIZE voor {strategy_name} op {symbol} ---")
 
     # Beperk parameter ranges drastisch voor snelle tests
-    param_ranges = {
-        'window': [20, 50, 80],
-        'std_dev': [1.5, 2.5],
-        'sl_method': ['fixed_percent'],
-        'sl_fixed_percent': [0.02],
-        'tp_method': ['fixed_percent'],
-        'tp_fixed_percent': [0.04]
-    }
+    param_ranges = {'window': [20, 50, 80], 'std_dev': [1.5, 2.5],
+        'sl_method': ['fixed_percent'], 'sl_fixed_percent': [0.02],
+        'tp_method': ['fixed_percent'], 'tp_fixed_percent': [0.04]}
 
     # Haal data op als een volledig nieuwe dataframe
     print("1. Data ophalen...")
@@ -44,7 +39,8 @@ def quick_optimize(strategy_name, symbol=SYMBOL, top_n=3, period_days=1095):
 
     # Maak parameter combinaties
     param_names = list(param_ranges.keys())
-    param_values = [param_ranges[name] if isinstance(param_ranges[name], list) else [param_ranges[name]] for name in param_names]
+    param_values = [param_ranges[name] if isinstance(param_ranges[name], list) else [
+        param_ranges[name]] for name in param_names]
     param_combinations = list(product(*param_values))
     total_combinations = len(param_combinations)
 
@@ -58,7 +54,7 @@ def quick_optimize(strategy_name, symbol=SYMBOL, top_n=3, period_days=1095):
         # Maak parameter dictionary
         param_dict = {name: value for name, value in zip(param_names, params)}
 
-        print(f"\nTest {i+1}/{total_combinations}: {param_dict}")
+        print(f"\nTest {i + 1}/{total_combinations}: {param_dict}")
 
         try:
             # Maak NIEUWE kopie van data voor elke test
@@ -78,15 +74,11 @@ def quick_optimize(strategy_name, symbol=SYMBOL, top_n=3, period_days=1095):
 
             # Run backtest
             print(f"  Backtest uitvoeren...")
-            pf = vbt.Portfolio.from_signals(
-                close=df['close'].values,  # Gebruik numpy array ipv pandas
+            pf = vbt.Portfolio.from_signals(close=df['close'].values,
+                # Gebruik numpy array ipv pandas
                 entries=entries_copy.values,  # Gebruik numpy arrays
-                sl_stop=sl_stop_copy.values,
-                tp_stop=tp_stop_copy.values,
-                init_cash=INITIAL_CAPITAL,
-                fees=FEES,
-                freq='1D'
-            )
+                sl_stop=sl_stop_copy.values, tp_stop=tp_stop_copy.values,
+                init_cash=INITIAL_CAPITAL, fees=FEES, freq='1D')
 
             # Resultaten berekenen
             return_pct = pf.total_return()
@@ -96,25 +88,17 @@ def quick_optimize(strategy_name, symbol=SYMBOL, top_n=3, period_days=1095):
 
             # FTMO compliance check
             compliant, profit_target = check_ftmo_compliance(pf, {
-                'total_return': return_pct,
-                'max_drawdown': drawdown
-            })
+                'total_return': return_pct, 'max_drawdown': drawdown})
 
             # Voeg resultaten toe
-            results.append({
-                'params': param_dict,
-                'metrics': {
-                    'total_return': float(return_pct),
-                    'sharpe_ratio': float(sharpe),
-                    'max_drawdown': float(drawdown),
-                    'win_rate': float(win_rate),
-                    'trades_count': len(pf.trades)
-                },
-                'ftmo_compliant': compliant,
-                'profit_target_reached': profit_target
-            })
+            results.append({'params': param_dict,
+                'metrics': {'total_return': float(return_pct),
+                    'sharpe_ratio': float(sharpe), 'max_drawdown': float(drawdown),
+                    'win_rate': float(win_rate), 'trades_count': len(pf.trades)},
+                'ftmo_compliant': compliant, 'profit_target_reached': profit_target})
 
-            print(f"  ✓ Return: {return_pct:.2%}, Sharpe: {sharpe:.2f}, Drawdown: {drawdown:.2%}")
+            print(
+                f"  ✓ Return: {return_pct:.2%}, Sharpe: {sharpe:.2f}, Drawdown: {drawdown:.2%}")
             print(f"  ✓ FTMO Compliant: {'JA' if compliant else 'NEE'}")
 
         except Exception as e:
@@ -122,13 +106,14 @@ def quick_optimize(strategy_name, symbol=SYMBOL, top_n=3, period_days=1095):
 
     # Sorteer op sharpe ratio
     if results:
-        sorted_results = sorted(results, key=lambda x: x['metrics']['sharpe_ratio'], reverse=True)
+        sorted_results = sorted(results, key=lambda x: x['metrics']['sharpe_ratio'],
+                                reverse=True)
         top_results = sorted_results[:top_n]
 
         # Toon top resultaten
         print("\n--- TOP RESULTATEN ---")
         for i, result in enumerate(top_results):
-            print(f"\n#{i+1}: Sharpe = {result['metrics']['sharpe_ratio']:.4f}")
+            print(f"\n#{i + 1}: Sharpe = {result['metrics']['sharpe_ratio']:.4f}")
             for param_name, param_value in result['params'].items():
                 print(f"  {param_name}: {param_value}")
             print("  --- Performance ---")
@@ -143,15 +128,10 @@ def quick_optimize(strategy_name, symbol=SYMBOL, top_n=3, period_days=1095):
         results_file = output_path / f"{strategy_name}_{symbol}_quick_optim.json"
 
         with open(results_file, 'w') as f:
-            json.dump({
-                'strategy': strategy_name,
-                'symbol': symbol,
-                'total_combinations': total_combinations,
-                'top_results': [{
-                    'params': result['params'],
-                    'metrics': result['metrics']
-                } for result in top_results]
-            }, f, indent=2)
+            json.dump({'strategy': strategy_name, 'symbol': symbol,
+                'total_combinations': total_combinations, 'top_results': [
+                    {'params': result['params'], 'metrics': result['metrics']} for
+                    result in top_results]}, f, indent=2)
 
         print(f"\nResultaten opgeslagen in: {results_file}")
 
@@ -171,15 +151,9 @@ def quick_optimize(strategy_name, symbol=SYMBOL, top_n=3, period_days=1095):
             tp_stop_np = tp_stop.values
             close_np = df_verify['close'].values
 
-            pf = vbt.Portfolio.from_signals(
-                close=close_np,
-                entries=entries_np,
-                sl_stop=sl_stop_np,
-                tp_stop=tp_stop_np,
-                init_cash=INITIAL_CAPITAL,
-                fees=FEES,
-                freq='1D'
-            )
+            pf = vbt.Portfolio.from_signals(close=close_np, entries=entries_np,
+                sl_stop=sl_stop_np, tp_stop=tp_stop_np, init_cash=INITIAL_CAPITAL,
+                fees=FEES, freq='1D')
 
             print(f"Return: {pf.total_return():.2%}")
             print(f"Sharpe: {pf.sharpe_ratio():.2f}")
@@ -194,7 +168,8 @@ def quick_optimize(strategy_name, symbol=SYMBOL, top_n=3, period_days=1095):
             plt.savefig(output_path / f"{strategy_name}_{symbol}_best_equity.png")
             plt.close()
 
-            print(f"Equity curve opgeslagen in: {output_path / f'{strategy_name}_{symbol}_best_equity.png'}")
+            print(
+                f"Equity curve opgeslagen in: {output_path / f'{strategy_name}_{symbol}_best_equity.png'}")
 
             return top_results, pf
 
@@ -205,12 +180,15 @@ def quick_optimize(strategy_name, symbol=SYMBOL, top_n=3, period_days=1095):
 
     return results, None
 
+
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Quick Strategy Optimizer")
-    parser.add_argument("--strategy", type=str, default="BollongStrategy", help="Naam van de strategie")
-    parser.add_argument("--symbol", type=str, default=SYMBOL, help=f"Trading symbool (default: {SYMBOL})")
+    parser.add_argument("--strategy", type=str, default="BollongStrategy",
+                        help="Naam van de strategie")
+    parser.add_argument("--symbol", type=str, default=SYMBOL,
+                        help=f"Trading symbool (default: {SYMBOL})")
 
     args = parser.parse_args()
 

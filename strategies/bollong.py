@@ -6,6 +6,7 @@ from typing import Tuple
 from config import logger
 from . import register_strategy  # Relatieve import om circulariteit te vermijden
 from .base_strategy import BaseStrategy
+from utils.indicator_utils import calculate_bollinger_bands
 
 def calculate_atr(df: pd.DataFrame, window: int = 14) -> Tuple[pd.Series, pd.Series]:
     high = df['high']
@@ -95,9 +96,10 @@ class BollongStrategy(BaseStrategy):
     def generate_signals(self, df: pd.DataFrame) -> Tuple[pd.Series, pd.Series, pd.Series]:
         has_datetime_index = hasattr(df.index, 'hour')
 
-        sma = df['close'].rolling(window=self.window).mean()
-        std = df['close'].rolling(window=self.window).std()
-        upper_band = sma + (self.std_dev * std)
+        # Gebruik de nieuwe calculate_bollinger_bands functie
+        upper_band, sma, lower_band = calculate_bollinger_bands(df['close'],
+                                                        window=self.window,
+                                                        std_dev=self.std_dev)
 
         atr, tr = calculate_atr(df)
         entries = df['close'] > upper_band  # Long-only

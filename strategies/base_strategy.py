@@ -1,11 +1,13 @@
 # strategies/base_strategy.py
 from abc import ABC, abstractmethod
 
+
 class BaseStrategy(ABC):
     """
     Abstracte basisklasse die alle trading strategieën moeten implementeren.
     Zorgt voor een uniforme interface voor backtest, optimalisatie en live trading.
     """
+
     def __init__(self):
         self.name = self.__class__.__name__
 
@@ -54,4 +56,5 @@ class BaseStrategy(ABC):
         Returns:
             list: Metrics in volgorde van belangrijkheid
         """
-        return ["sharpe_ratio", "calmar_ratio", "total_return", "max_drawdown", "win_rate"]
+        return ["sharpe_ratio", "calmar_ratio", "total_return", "max_drawdown",
+                "win_rate"]

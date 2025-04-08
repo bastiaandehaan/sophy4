@@ -19,14 +19,14 @@ def test_optimizer():
 
     # 1. Test met beperkte parameter set voor snelheid
     test_params = {'window': [20, 50, 80], 'std_dev': [1.5, 2.5],
-        'sl_method': ['atr_based'], 'sl_atr_mult': [1.5, 2.5],
-        'tp_method': ['atr_based'], 'tp_atr_mult': [3.0, 4.0]}
+                   'sl_method': ['atr_based'], 'sl_atr_mult': [1.5, 2.5],
+                   'tp_method': ['atr_based'], 'tp_atr_mult': [3.0, 4.0]}
 
     start_time = time.time()
     print("\nTest 1: Beperkte parameter optimalisatie met BollongStrategy")
     results = optimize_strategy(strategy_name="BollongStrategy",
-        param_ranges=test_params, metric="sharpe_ratio", top_n=2,
-        ftmo_compliant_only=True, verbose=True)
+                                param_ranges=test_params, metric="sharpe_ratio",
+                                top_n=2, ftmo_compliant_only=True, verbose=True)
 
     if not results or not results.get('top_results'):
         print("❌ Test 1 gefaald: Geen resultaten teruggekregen")
@@ -38,8 +38,8 @@ def test_optimizer():
     start_time = time.time()
     print("\nTest 2: Optimalisatie op Calmar ratio")
     calmar_results = optimize_strategy(strategy_name="BollongStrategy",
-        param_ranges=test_params, metric="calmar_ratio", top_n=1,
-        ftmo_compliant_only=True, verbose=True)
+                                       param_ranges=test_params, metric="calmar_ratio",
+                                       top_n=1, ftmo_compliant_only=True, verbose=True)
 
     if not calmar_results or not calmar_results.get('top_results'):
         print("❌ Test 2 gefaald: Geen resultaten teruggekregen")
@@ -61,7 +61,7 @@ def test_optimizer():
     print("\nTest 3: Parameter opslag en validatie")
     start_time = time.time()
     validation = validate_best_parameters(strategy_name="BollongStrategy",
-        params=loaded_params)
+                                          params=loaded_params)
 
     if not validation:
         print("❌ Test 3 gefaald: Validatie mislukt")
