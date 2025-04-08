@@ -1,8 +1,9 @@
 # Sophy4/live/live_trading.py
 import time
-from typing import Dict, Union, Optional, List, Tuple
-import pandas as pd
+from typing import Dict, Union, Optional, List
+
 import MetaTrader5 as mt5
+import pandas as pd
 
 from config import logger
 

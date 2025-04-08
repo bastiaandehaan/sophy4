@@ -1,13 +1,12 @@
 # Sophy4/backtest/backtest.py
+from typing import Dict, Tuple
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
-from pathlib import Path
-from typing import Dict, Tuple
 
 from config import INITIAL_CAPITAL, FEES, logger, OUTPUT_DIR
-
 
 
 def run_backtest(df: pd.DataFrame, symbol: str, strategy_params: Dict = None) -> Tuple[vbt.Portfolio, Dict]:

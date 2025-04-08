@@ -12,41 +12,25 @@ STRATEGIES = {}
 def register_strategy(strategy_class):
     """
     Decorator om een strategie te registreren in het systeem.
-
-    Gebruik:
-        @register_strategy
-        class MyStrategy(BaseStrategy):
-            ...
     """
     if not inspect.isclass(strategy_class):
         raise TypeError("Decorator moet op een klasse worden toegepast")
-
     if not issubclass(strategy_class, BaseStrategy):
         raise TypeError(f"{strategy_class.__name__} moet BaseStrategy subklassen")
 
-    # Registreer de strategie met zijn klassenaam
     STRATEGIES[strategy_class.__name__] = strategy_class
     print(f"Strategie '{strategy_class.__name__}' geregistreerd")
-
     return strategy_class
 
 
 def get_strategy(strategy_name, **params):
     """
     Creëert een strategie-instantie op basis van de naam.
-
-    Args:
-        strategy_name: Naam van de strategie class
-        **params: Parameters voor de strategie
-
-    Returns:
-        Een instantie van de gevraagde strategie
     """
     if strategy_name not in STRATEGIES:
         available = ", ".join(STRATEGIES.keys())
         raise ValueError(
             f"Strategie '{strategy_name}' niet gevonden. Beschikbaar: {available}")
-
     strategy_class = STRATEGIES[strategy_name]
     return strategy_class(**params)
 

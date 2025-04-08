@@ -1,10 +1,10 @@
 # Sophy4/monitor/monitor.py
 import time
-import pandas as pd
-import matplotlib.pyplot as plt
 from pathlib import Path
-import vectorbt as vbt
+
 import MetaTrader5 as mt5
+import matplotlib.pyplot as plt
+import pandas as pd
 
 from config import logger, OUTPUT_DIR
 from live.live_trading import check_positions, manage_trailing_stop

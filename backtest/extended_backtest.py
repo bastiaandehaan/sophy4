@@ -1,12 +1,13 @@
 # backtest/extended_backtest.py
+import json
 import sys
 from pathlib import Path
-import json
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import vectorbt as vbt
 from typing import Dict, Tuple, Optional
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import vectorbt as vbt
 
 # Voeg projectroot toe aan pythonpath
 sys.path.append(str(Path(__file__).parent.parent))

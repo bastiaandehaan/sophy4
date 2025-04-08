@@ -1,13 +1,12 @@
 # optimization/quick_optimize.py
-import sys
-from pathlib import Path
-import time
 import json
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import vectorbt as vbt
+import sys
 from itertools import product
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import pandas as pd
+import vectorbt as vbt
 
 # Voeg projectroot toe aan pythonpath
 sys.path.append(str(Path(__file__).parent.parent))
@@ -15,7 +14,8 @@ sys.path.append(str(Path(__file__).parent.parent))
 from utils.data_utils import fetch_historical_data
 from strategies import get_strategy
 from ftmo_compliance.ftmo_check import check_ftmo_compliance
-from config import SYMBOL, INITIAL_CAPITAL, FEES, OUTPUT_DIR, logger
+from config import SYMBOL, INITIAL_CAPITAL, FEES, OUTPUT_DIR
+
 
 def quick_optimize(strategy_name, symbol=SYMBOL, top_n=3, period_days=1095):
     """

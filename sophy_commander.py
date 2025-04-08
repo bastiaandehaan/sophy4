@@ -1,15 +1,14 @@
 # sophy_commander.py
-import os
-import sys
-from pathlib import Path
 import argparse
 import json
+from pathlib import Path
+
 import MetaTrader5 as mt5
 
-from optimization.optimize import optimize_strategy, walk_forward_test, \
-    multi_instrument_test
 from backtest.extended_backtest import run_extended_backtest, monte_carlo_analysis
 from config import SYMBOL, logger, OUTPUT_DIR
+from optimization.optimize import optimize_strategy, walk_forward_test, \
+    multi_instrument_test
 
 
 def run_full_analysis(strategy, symbols=None, timeframes=None, monte_carlo=False):
