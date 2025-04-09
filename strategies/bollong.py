@@ -104,6 +104,7 @@ class BollongStrategy(BaseStrategy):
 
         atr, tr = calculate_atr(df)
         entries = df['close'] > upper_band  # Long-only
+        logger.info(f"Gemiddeld aantal signalen: {entries.sum()} over {len(df)} dagen")
 
         if self.use_volume_filter and 'volume' in df.columns:
             avg_volume = df['volume'].rolling(window=self.volume_filter_periods).mean()
