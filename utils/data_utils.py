@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta
-from typing import Optional, Union, Dict, Any
+from typing import Optional, Union, Dict
 
 import MetaTrader5 as mt5
 import pandas as pd

@@ -1,182 +1,259 @@
-def walk_forward_test(strategy_name, symbol, params, period_days=1095):
-    """
-    Perform walk-forward testing to validate strategy robustness.
+#!/usr/bin/env python
+# optimization/optimize.py
+"""
+Een verbeterde optimalisatie tool voor Sophy4 met beknopte output.
+"""
+import argparse
+import itertools
+import json
+import logging
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
 
-    Walk-forward testing divides historical data into multiple in-sample/out-of-sample
-    segments and evaluates if strategy parameters optimized on in-sample data
-    perform well on out-of-sample data.
+# Voeg projectroot toe aan Python path
+sys.path.append(str(Path(__file__).parent.parent))
+
+from strategies import get_strategy, STRATEGIES
+from utils.data_utils import fetch_historical_data
+from utils.backtest import run_backtest
+from config import logger, OUTPUT_DIR
+
+# Schakel alle loggers uit behalve onze eigen
+for name in logging.root.manager.loggerDict:
+    if name != "summary":
+        logging.getLogger(name).setLevel(logging.ERROR)
+
+# Maak een aparte console handler voor samenvattingen
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+formatter = logging.Formatter('%(message)s')  # Alleen het bericht, geen datum en niveau
+console_handler.setFormatter(formatter)
+
+# Maak een summary logger
+summary_logger = logging.getLogger("summary")
+summary_logger.setLevel(logging.INFO)
+for handler in summary_logger.handlers:
+    summary_logger.removeHandler(handler)
+summary_logger.addHandler(console_handler)
+summary_logger.propagate = False  # Voorkom dubbele logs
+
+
+def update_progress(current, total, bar_length=50):
+    """Toon een voortgangsbalk in de console."""
+    percent = float(current) / total
+    arrow = '#' * int(round(percent * bar_length))
+    spaces = ' ' * (bar_length - len(arrow))
+
+    sys.stdout.write(f"\r|{arrow}{spaces}| {current}/{total} ({percent:.1%})")
+    sys.stdout.flush()
+
+
+def quick_optimize(strategy_name, symbol, timeframe="D1", days=365,
+                   metric="sharpe_ratio", top_n=5, verbose=False, quick=False):
+    """
+    Voert een snelle parameter optimalisatie uit en slaat de resultaten op.
+    Toont alleen een beknopte samenvatting van de resultaten.
 
     Args:
-        strategy_name (str): Name of the strategy to test
-        symbol (str): Trading symbol to test on
-        params (dict): Strategy parameters to test
-        period_days (int): Total period for testing in days
-
-    Returns:
-        dict: Results of walk-forward testing including validation status and metrics
+        strategy_name: Naam van de strategie
+        symbol: Handelssymbool
+        timeframe: Timeframe ("D1", "H4", etc)
+        days: Aantal dagen historische data
+        metric: Metric om op te optimaliseren
+        top_n: Aantal beste resultaten om te tonen
+        verbose: Toon uitgebreide logs
+        quick: Gebruik een beperkte parameter grid (sneller)
     """
-    import datetime as dt
-    from backtest.extended_backtest import run_extended_backtest
-    from config import logger
+    start_time = time.time()
 
-    logger.info(f"Running walk-forward test for {strategy_name} on {symbol}")
+    if verbose:
+        # Herstel normale logging als verbose modus actief is
+        for handler in logger.handlers:
+            handler.setLevel(logging.INFO)
 
-    # Get current date and calculate start date
-    end_date = dt.datetime.now()
-    start_date = end_date - dt.timedelta(days=period_days)
+    summary_logger.info(f"\n{'=' * 80}")
+    summary_logger.info(
+        f"OPTIMALISATIE GESTART: {strategy_name} op {symbol} ({timeframe})")
+    summary_logger.info(f"{'=' * 80}")
 
-    # Number of windows to test (e.g., 3 windows = 3 in-sample/out-of-sample pairs)
-    n_windows = 3
-    window_size = period_days // n_windows
+    # Controleer of de strategie bestaat
+    if strategy_name not in STRATEGIES:
+        available = ", ".join(STRATEGIES.keys())
+        summary_logger.error(
+            f"Strategie {strategy_name} niet gevonden. Beschikbaar: {available}")
+        return []
 
-    in_sample_results = []
-    out_of_sample_results = []
+    # Haal de standaard parameters op
+    strategy_class = STRATEGIES[strategy_name]
+    param_grid = strategy_class.get_default_params()
 
-    # For each window
-    for i in range(n_windows):
-        # Calculate window dates
-        window_start = start_date + dt.timedelta(days=i * window_size)
-        in_sample_end = window_start + dt.timedelta(
-            days=window_size * 0.7)  # 70% for in-sample
-        out_sample_end = window_start + dt.timedelta(days=window_size)
+    # Beperk parameters voor snelle run
+    if quick:
+        for key, values in param_grid.items():
+            if isinstance(values, list) and len(values) > 3:
+                # Neem alleen begin, midden en eind waarde
+                param_grid[key] = [values[0], values[len(values) // 2], values[-1]]
 
-        logger.info(
-            f"Window {i + 1}: In-sample {window_start.date()} to {in_sample_end.date()}, "
-            f"Out-of-sample {in_sample_end.date()} to {out_sample_end.date()}")
+    # Bepaal alle parameter combinaties
+    param_names = list(param_grid.keys())
+    param_values = list(param_grid.values())
+    param_combinations = list(itertools.product(*param_values))
+    total_combinations = len(param_combinations)
 
-        # Run in-sample backtest
-        in_sample_pf, in_sample_metrics = run_extended_backtest(
-            strategy_name=strategy_name, parameters=params, symbol=symbol,
-            start_date=window_start, end_date=in_sample_end)
+    summary_logger.info(f"Testen van {total_combinations} parameter combinaties...")
 
-        # Run out-of-sample backtest
-        out_sample_pf, out_sample_metrics = run_extended_backtest(
-            strategy_name=strategy_name, parameters=params, symbol=symbol,
-            start_date=in_sample_end, end_date=out_sample_end)
+    # Haal historische data op
+    df = fetch_historical_data(symbol, timeframe=timeframe, days=days)
+    if df is None or df.empty:
+        summary_logger.error(f"Geen data beschikbaar voor {symbol}")
+        return []
 
-        # Store results
-        if in_sample_metrics and out_sample_metrics:
-            in_sample_results.append(in_sample_metrics)
-            out_of_sample_results.append(out_sample_metrics)
+    # Test elke parameter combinatie
+    results = []
+    result_hash = set()  # Voorkom duplicaten
 
-    # Analyze results
-    if len(out_of_sample_results) < 1:
-        logger.warning("Not enough data for walk-forward testing")
-        return {"walk_forward_validated": False,
-                "reason": "Insufficient data for testing"}
+    try:
+        summary_logger.info(f"0% |{' ' * 50}| 100%")
 
-    # Calculate average metrics
-    avg_in_sample_sharpe = sum(
-        r.get('sharpe_ratio', 0) for r in in_sample_results) / len(in_sample_results)
-    avg_out_sample_sharpe = sum(
-        r.get('sharpe_ratio', 0) for r in out_of_sample_results) / len(
-        out_of_sample_results)
+        for i, values in enumerate(param_combinations):
+            params = dict(zip(param_names, values))
 
-    avg_in_sample_profit_factor = sum(
-        r.get('profit_factor', 0) for r in in_sample_results) / len(in_sample_results)
-    avg_out_sample_profit_factor = sum(
-        r.get('profit_factor', 0) for r in out_of_sample_results) / len(
-        out_of_sample_results)
+            # Toon voortgang
+            update_progress(i + 1, total_combinations)
 
-    avg_in_sample_win_rate = sum(r.get('win_rate', 0) for r in in_sample_results) / len(
-        in_sample_results)
-    avg_out_sample_win_rate = sum(
-        r.get('win_rate', 0) for r in out_of_sample_results) / len(
-        out_of_sample_results)
+            try:
+                # Maak strategie instantie
+                strategy = get_strategy(strategy_name, **params)
 
-    # Check if strategy is robust (out-of-sample performance is at least 70% of in-sample)
-    sharpe_ratio_check = avg_out_sample_sharpe >= (avg_in_sample_sharpe * 0.7)
-    profit_factor_check = avg_out_sample_profit_factor >= (
-            avg_in_sample_profit_factor * 0.7)
-    win_rate_check = avg_out_sample_win_rate >= (avg_in_sample_win_rate * 0.7)
+                # Genereer signalen
+                entries, sl_stop, tp_stop = strategy.generate_signals(df)
+                if entries.sum() == 0:
+                    continue
 
-    is_validated = sharpe_ratio_check and profit_factor_check and win_rate_check
+                # Maak een kopie van het dataframe
+                backtest_df = df.copy()
+                backtest_df['entries'] = entries
+                backtest_df['sl_stop'] = sl_stop
+                backtest_df['tp_stop'] = tp_stop
 
-    return {"walk_forward_validated": is_validated,
-            "in_sample_performance": {"sharpe_ratio": avg_in_sample_sharpe,
-                                      "profit_factor": avg_in_sample_profit_factor,
-                                      "win_rate": avg_in_sample_win_rate},
-            "out_of_sample_performance": {"sharpe_ratio": avg_out_sample_sharpe,
-                                          "profit_factor": avg_out_sample_profit_factor,
-                                          "win_rate": avg_out_sample_win_rate},
-            "ratio_checks": {"sharpe_ratio_check": sharpe_ratio_check,
-                             "profit_factor_check": profit_factor_check,
-                             "win_rate_check": win_rate_check}}
+                # Voer backtest uit
+                pf, metrics = run_backtest(backtest_df, symbol, strategy_params=params)
+
+                # Als metric niet bestaat in de resultaten, gebruik een fallback
+                if metric not in metrics and len(metrics) > 0:
+                    if verbose:
+                        summary_logger.warning(
+                            f"Metric {metric} niet gevonden, gebruik {list(metrics.keys())[0]}")
+                    metric = list(metrics.keys())[0]
+
+                # Voeg aantal signalen toe aan metrics
+                metrics['signal_count'] = int(entries.sum())
+                metrics['trade_count'] = metrics.get('trades_count', 0)
+
+                # Controleer op duplicaten door een hash van de belangrijkste metrics te maken
+                # Dit is om duplicaten te vermijden in de resultaten
+                result_key = (round(metrics.get('sharpe_ratio', 0), 3),
+                              round(metrics.get('total_return', 0), 3),
+                              round(metrics.get('max_drawdown', 0), 3),
+                              metrics.get('trade_count', 0))
+
+                if result_key not in result_hash:
+                    result_hash.add(result_key)
+                    # Sla resultaten op
+                    results.append({'params': params, 'metrics': metrics})
+
+            except Exception as e:
+                if verbose:
+                    logger.error(f"Fout bij testen parameters {params}: {str(e)}")
+
+        # Nieuwe regel na progress bar
+        print()
+
+    except KeyboardInterrupt:
+        print("\nOptimalisatie onderbroken door gebruiker!")
+
+    # Sorteer op de gekozen metric
+    if results:
+        sorted_results = sorted(results,
+            key=lambda x: x['metrics'].get(metric, -999999), reverse=True)
+        top_results = sorted_results[:top_n]
+
+        # Log de top resultaten in een nette tabel
+        summary_logger.info(f"\n{'=' * 80}")
+        summary_logger.info(
+            f"TOP {len(top_results)} RESULTATEN VOOR {strategy_name} OP {symbol}:")
+        summary_logger.info(f"{'=' * 80}")
+
+        # Maak een tabelkop
+        summary_logger.info(
+            f"{'#':<3} {'Sharpe':<8} {'Return':<8} {'DrawDn':<8} {'WinRate':<8} {'Trades':<6} {'Params'}")
+        summary_logger.info(f"{'-' * 80}")
+
+        # Log elke top combinatie
+        for i, result in enumerate(top_results):
+            metrics = result['metrics']
+            params_str = ", ".join([f"{k}={v}" for k, v in result['params'].items() if
+                                    k in ['window', 'std_dev', 'sl_fixed_percent',
+                                          'tp_fixed_percent', 'use_trailing_stop',
+                                          'trailing_stop_percent']])
+
+            summary_logger.info(f"{i + 1:<3} "
+                                f"{metrics.get('sharpe_ratio', 0):.2f}     "
+                                f"{metrics.get('total_return', 0) * 100:.2f}%    "
+                                f"{metrics.get('max_drawdown', 0) * 100:.2f}%    "
+                                f"{metrics.get('win_rate', 0) * 100:.2f}%    "
+                                f"{metrics.get('trade_count', 0):<6} "
+                                f"{params_str}")
+
+        # Sla resultaten op
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+        output_path = Path(OUTPUT_DIR)
+        output_path.mkdir(exist_ok=True, parents=True)
+
+        output_file = output_path / f"{strategy_name}_{symbol}_quick_optim.json"
+        with open(output_file, 'w') as f:
+            # Maak JSON-serializable
+            serializable_results = []
+            for result in top_results:
+                metrics_clean = {k: float(v) if isinstance(v, (float, int)) else str(v)
+                                 for k, v in result['metrics'].items()}
+                serializable_results.append(
+                    {'params': result['params'], 'metrics': metrics_clean})
+            json.dump(serializable_results, f, indent=2)
+
+        elapsed_time = time.time() - start_time
+        summary_logger.info(f"\nResultaten opgeslagen in {output_file}")
+        summary_logger.info(f"Optimalisatie voltooid in {elapsed_time:.1f} seconden.")
+        return top_results
+
+    summary_logger.warning("\nGeen resultaten gevonden")
+    return []
 
 
-def multi_instrument_test(strategy_name, params, symbols=None, timeframes=None):
-    """
-    Test a strategy with the same parameters across multiple instruments to check robustness.
+def parse_args():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description="Sophy4 Quick Optimization Tool")
+    parser.add_argument("--strategy", type=str, required=True,
+                        help="Strategie om te optimaliseren")
+    parser.add_argument("--symbol", type=str, default="GER40.cash",
+                        help="Handelssymbool")
+    parser.add_argument("--timeframe", type=str, default="D1", help="Timeframe")
+    parser.add_argument("--days", type=int, default=365,
+                        help="Aantal dagen historische data")
+    parser.add_argument("--metric", type=str, default="sharpe_ratio",
+                        help="Metric om te optimaliseren")
+    parser.add_argument("--top_n", type=int, default=5,
+                        help="Aantal beste parameter sets")
+    parser.add_argument("--verbose", action="store_true",
+                        help="Toon alle log berichten")
+    parser.add_argument("--quick", action="store_true",
+                        help="Gebruik een beperkte parameter grid (sneller)")
+    return parser.parse_args()
 
-    Args:
-        strategy_name (str): Name of the strategy to test
-        params (dict): Strategy parameters to test
-        symbols (list): List of symbols to test on; defaults to a predefined list
-        timeframes (dict): Dictionary mapping timeframe names to MT5 timeframe values
 
-    Returns:
-        dict: Results across all symbols and timeframes with performance metrics
-    """
-    from config import logger, SYMBOL
-    from backtest.extended_backtest import run_extended_backtest
-    import MetaTrader5 as mt5
-
-    if symbols is None:
-        symbols = [SYMBOL, 'US30.cash', 'EURUSD', 'GBPUSD']
-
-    if timeframes is None:
-        timeframes = {'H1': mt5.TIMEFRAME_H1, 'H4': mt5.TIMEFRAME_H4,
-                      'D1': mt5.TIMEFRAME_D1}
-
-    results = {}
-
-    logger.info(f"Running multi-instrument test for {strategy_name}")
-    logger.info(f"Parameters: {params}")
-    logger.info(f"Testing on symbols: {symbols}")
-    logger.info(f"Testing on timeframes: {list(timeframes.keys())}")
-
-    # Track overall statistics
-    total_tests = 0
-    profitable_tests = 0
-
-    # Test each symbol and timeframe combination
-    for symbol in symbols:
-        symbol_results = {}
-
-        for tf_name, tf_value in timeframes.items():
-            logger.info(f"Testing {strategy_name} on {symbol} ({tf_name})")
-
-            # Run backtest with provided parameters
-            pf, metrics = run_extended_backtest(strategy_name=strategy_name,
-                                                parameters=params, symbol=symbol, timeframe=tf_value)
-
-            # Store results and update stats
-            if metrics:
-                symbol_results[tf_name] = metrics
-                total_tests += 1
-
-                if metrics.get('net_profit', 0) > 0:
-                    profitable_tests += 1
-
-        # Store results for this symbol
-        results[symbol] = symbol_results
-
-    # Calculate robustness score
-    robustness_score = (profitable_tests / total_tests) if total_tests > 0 else 0
-
-    # Average performance metrics across all tests
-    all_metrics = [metric for symbol_data in results.values() for metric in
-                   symbol_data.values() if metric]
-
-    avg_metrics = {}
-
-    if all_metrics:
-        for key in ['sharpe_ratio', 'profit_factor', 'win_rate', 'max_drawdown_pct']:
-            values = [m.get(key, 0) for m in all_metrics]
-            avg_metrics[key] = sum(values) / len(values) if values else 0
-
-    return {"results_by_symbol": results, "robustness_score": robustness_score,
-            "profitable_percentage": (
-                    profitable_tests / total_tests * 100) if total_tests > 0 else 0,
-            "average_metrics": avg_metrics, "total_tests": total_tests,
-            "profitable_tests": profitable_tests}
+if __name__ == "__main__":
+    args = parse_args()
+    quick_optimize(args.strategy, args.symbol, args.timeframe, args.days, args.metric,
+                   args.top_n, args.verbose, args.quick)
