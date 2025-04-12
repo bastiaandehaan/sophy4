@@ -105,7 +105,7 @@ def _calculate_stop(portfolio_kwargs: Dict[str, Any], parameters: Dict[str, Any]
         parameters: Strategie parameters
     """
     if parameters.get('use_trailing_stop', False) and 'trailing_stop_percent' in parameters:
-        portfolio_kwargs['sl_trail_stop'] = parameters['trailing_stop_percent']
+        portfolio_kwargs['sl_trail'] = parameters['trailing_stop_percent']
         logger.info(f"Trailing stop ingesteld op {parameters['trailing_stop_percent']:.2%}")
 
 def create_visualizations(pf: vbt.Portfolio, strategy_name: str, symbol: str,

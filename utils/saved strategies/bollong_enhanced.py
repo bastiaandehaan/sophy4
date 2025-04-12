@@ -1,14 +1,15 @@
-# strategies/bollong.py
+# strategies/bollong_enhanced.py
 import json
 from typing import Tuple, Optional, Dict, List, Any
 
 import pandas as pd
+import pandas_ta as ta  # Voor RSI en ADX berekeningen
 
 from config import logger
 from risk.risk_management import RiskManager
 from utils.indicator_utils import calculate_bollinger_bands
-from . import register_strategy
-from .base_strategy import BaseStrategy
+from strategies import register_strategy
+from strategies.base_strategy import BaseStrategy
 
 
 def calculate_atr(df: pd.DataFrame, window: int = 14) -> Tuple[pd.Series, pd.Series]:
@@ -26,39 +27,13 @@ def calculate_atr(df: pd.DataFrame, window: int = 14) -> Tuple[pd.Series, pd.Ser
     return atr, tr
 
 
-def calculate_adx(df: pd.DataFrame, tr: Optional[pd.Series] = None,
-                  period: int = 14) -> pd.Series:
-    """Bereken ADX."""
-    plus_dm: pd.Series = df['high'].diff()
-    minus_dm: pd.Series = df['low'].diff().multiply(-1)
-    plus_dm = plus_dm.where((plus_dm > 0) & (plus_dm > minus_dm), 0)
-    minus_dm = minus_dm.where((minus_dm > 0) & (minus_dm > plus_dm), 0)
-
-    if tr is None:
-        tr1: pd.Series = abs(df['high'] - df['low'])
-        tr2: pd.Series = abs(df['high'] - df['close'].shift(1))
-        tr3: pd.Series = abs(df['low'] - df['close'].shift(1))
-        tr: pd.Series = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-    atr: pd.Series = tr.rolling(window=period).mean()
-    plus_di: pd.Series = 100 * (plus_dm.rolling(window=period).mean() / atr)
-    minus_di: pd.Series = 100 * (minus_dm.rolling(window=period).mean() / atr)
-
-    dx: pd.Series = pd.Series(0.0, index=df.index)
-    nonzero_mask: pd.Series = (plus_di + minus_di) > 0
-    dx[nonzero_mask] = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
-    adx: pd.Series = dx.rolling(window=period).mean()
-
-    return adx
-
-
 @register_strategy
-class BollongStrategy(BaseStrategy):
+class BollongEnhancedStrategy(BaseStrategy):
     def __init__(self, window: int = 50, std_dev: float = 2.0,
                  sl_method: str = "atr_based", sl_atr_mult: float = 2.0,
                  sl_fixed_percent: float = 0.02, tp_method: str = "atr_based",
                  tp_atr_mult: float = 3.0, tp_fixed_percent: float = 0.03,
-                 use_trailing_stop: bool = True,  # Changed to True
+                 use_trailing_stop: bool = True,
                  trailing_stop_method: str = "atr_based",
                  trailing_stop_atr_mult: float = 1.5,
                  trailing_stop_percent: float = 0.015,
@@ -67,7 +42,9 @@ class BollongStrategy(BaseStrategy):
                  volume_filter_mult: float = 1.5, risk_per_trade: float = 0.01,
                  max_positions: int = 3, use_time_filter: bool = False,
                  trading_hours: Tuple[int, int] = (9, 17), min_adx: float = 20,
-                 use_adx_filter: bool = False, confidence_level: float = 0.95):
+                 use_adx_filter: bool = True, confidence_level: float = 0.95,
+                 rsi_period: int = 14, rsi_overbought: float = 70.0,
+                 band_width_threshold: float = 0.5):
         super().__init__()
         self.window: int = window
         self.std_dev: float = std_dev
@@ -92,6 +69,9 @@ class BollongStrategy(BaseStrategy):
         self.min_adx: float = min_adx
         self.use_adx_filter: bool = use_adx_filter
         self.confidence_level: float = confidence_level
+        self.rsi_period: int = rsi_period
+        self.rsi_overbought: float = rsi_overbought
+        self.band_width_threshold: float = band_width_threshold
 
     def validate_parameters(self) -> bool:
         """Controleer of alle parameters geldig zijn."""
@@ -105,6 +85,12 @@ class BollongStrategy(BaseStrategy):
             raise ValueError("confidence_level moet tussen 0 en 1 liggen")
         if self.sl_atr_mult <= 0 or self.tp_atr_mult <= 0:
             raise ValueError("ATR multipliers moeten positief zijn")
+        if self.rsi_period < 1:
+            raise ValueError("rsi_period moet positief zijn")
+        if self.rsi_overbought <= 0 or self.rsi_overbought > 100:
+            raise ValueError("rsi_overbought moet tussen 0 en 100 liggen")
+        if self.band_width_threshold <= 0:
+            raise ValueError("band_width_threshold moet positief zijn")
         return True
 
     def _calculate_stop(self, df: pd.DataFrame, atr: pd.Series, method: str,
@@ -131,22 +117,28 @@ class BollongStrategy(BaseStrategy):
                                                                 window=self.window,
                                                                 std_dev=self.std_dev)
 
-        # Bereken de bandbreedte
+        # Bereken de bandbreedte en voeg bandbreedtefilter toe
         band_width = upper_band - lower_band
+        avg_band_width = band_width.rolling(window=20).mean()
+        band_width_filter = band_width > avg_band_width * self.band_width_threshold
         price_position = (df['close'] - lower_band) / band_width
-        entries = price_position > 0.7  # Prijs in de bovenste 30% van de bandbreedte (was 0.8)
+        entries = price_position > 0.7  # Prijs in de bovenste 30% van de bandbreedte
+
+        # Voeg RSI-bevestiging toe
+        rsi = ta.rsi(df['close'], length=self.rsi_period)
+        rsi_filter = rsi > self.rsi_overbought
+        entries = entries & rsi_filter
 
         # Volatiliteitsfilter: geen nieuwe signalen als ATR te hoog is
         atr, tr = calculate_atr(df)
         avg_atr = atr.rolling(window=20).mean()
-        volatility_filter = atr < avg_atr * 3.0  # Relaxed from 2.0 to 3.0
-        entries = entries & volatility_filter
+        volatility_filter = atr < avg_atr * 3.0
+        entries = entries & volatility_filter & band_width_filter
 
-        # Bear market-filter: alleen signalen in een bull market
-        long_sma = df['close'].rolling(window=100).mean()  # Increased from 50 to 100
-        bull_market = df[
-                          'close'] > long_sma  # Alleen signalen als prijs boven lange SMA
-        entries = entries & bull_market
+        # Trendfilter met ADX en Directional Indicators
+        adx = ta.adx(df['high'], df['low'], df['close'], length=14)
+        trend_filter = (adx['ADX_14'] > self.min_adx) & (adx['DMP_14'] > adx['DMN_14'])
+        entries = entries & trend_filter
 
         logger.info(f"Gemiddeld aantal signalen: {entries.sum()} over {len(df)} bars")
 
@@ -157,12 +149,6 @@ class BollongStrategy(BaseStrategy):
             volume_filter: pd.Series = df[
                                            'volume'] > avg_volume * self.volume_filter_mult
             entries = entries & volume_filter
-
-        if self.use_adx_filter:
-            atr, tr = calculate_atr(df)
-            adx: pd.Series = calculate_adx(df, tr=tr)
-            adx_filter: pd.Series = adx > self.min_adx
-            entries = entries & adx_filter
 
         if self.use_time_filter:
             if not has_datetime_index:
@@ -190,8 +176,8 @@ class BollongStrategy(BaseStrategy):
                     f"Trailing stop activeert na {self.trailing_activation_percent:.2%} prijsstijging")
 
         sl_stop = sl_stop.fillna(0.015)  # Strakkere stop-loss: 1,5%
-        tp_stop = tp_stop.fillna(0.09)  # Kleinere take-profit: 3%
-        logger.info(f"Aantal LONG signalen: {entries.sum()}")
+        tp_stop = tp_stop.fillna(0.03)  # Kleinere take-profit: 3%
+        logger.info(f"Aantal SHORT signalen: {entries.sum()}")
         return entries, sl_stop, tp_stop
 
     @classmethod
@@ -202,14 +188,21 @@ class BollongStrategy(BaseStrategy):
 
         tf_config = config.get(timeframe,
                                config["H1"])  # Default to H1 if timeframe not found
-        return {'window': tf_config["window_range"],
-            'std_dev': tf_config["std_dev_range"], 'sl_method': ["fixed_percent"],
+        return {
+            'window': tf_config["window_range"],
+            'std_dev': tf_config["std_dev_range"],
+            'sl_method': ["fixed_percent"],
             'sl_fixed_percent': tf_config["sl_fixed_percent_range"],
             'tp_method': ["fixed_percent"],
             'tp_fixed_percent': tf_config["tp_fixed_percent_range"],
-            'use_trailing_stop': [True],  # Only test with trailing stop enabled
-            'trailing_stop_percent': [0.01, 0.015, 0.02],  # Wider range
-            'risk_per_trade': [0.005, 0.01], 'confidence_level': [0.90, 0.95, 0.99]}
+            'use_trailing_stop': [True],
+            'trailing_stop_percent': [0.01, 0.015, 0.02],
+            'risk_per_trade': [0.005, 0.01],
+            'confidence_level': [0.90, 0.95, 0.99],
+            'rsi_period': [14],
+            'rsi_overbought': [70.0],
+            'band_width_threshold': [0.5]
+        }
 
     @classmethod
     def get_parameter_descriptions(cls) -> Dict[str, str]:
@@ -229,7 +222,11 @@ class BollongStrategy(BaseStrategy):
             'trailing_stop_atr_mult': 'Trailing stop als factor van ATR',
             'trailing_activation_percent': 'Percentage prijsstijging voordat trailing stop wordt geactiveerd',
             'risk_per_trade': 'Risico per trade als percentage van portfolio (0.01 = 1%)',
-            'confidence_level': 'Betrouwbaarheidsniveau voor VaR-berekening'}
+            'confidence_level': 'Betrouwbaarheidsniveau voor VaR-berekening',
+            'rsi_period': 'Aantal perioden voor RSI-berekening',
+            'rsi_overbought': 'RSI-drempel voor overbought-condities',
+            'band_width_threshold': 'Drempel voor bandbreedte als factor van gemiddelde bandbreedte'
+        }
 
     @classmethod
     def get_performance_metrics(cls) -> List[str]:
