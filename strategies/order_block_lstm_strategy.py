@@ -70,18 +70,29 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         Detecteer order blocks in de data.
         """
         obs = []
+        logger.info(f"Data lengte voor order block detectie: {len(df)}")
+
         for i in range(len(df) - 3):
             c1, c2, c3 = df.iloc[i], df.iloc[i + 1], df.iloc[i + 2]
 
             # Bearish->Bearish->Bullish engulf = Bullish OB
-            if (c1['open'] > c1['close'] and c2['open'] > c2['close'] and c3['open'] <
-                    c3['close'] and c3['open'] < c2['close']):
+            if (c1['open'] > c1['close'] and c2['open'] > c2['close'] and c3['open'] < c3['close'] and c3['open'] < c2['close']):
                 obs.append(OrderBlock(1, c3.name, c3['high'], c3['low']))
+                logger.debug(f"Bullish OB gedetecteerd op {c3.name}")
 
             # Bullish->Bullish->Bearish engulf = Bearish OB
-            elif (c1['open'] < c1['close'] and c2['open'] < c2['close'] and c3['open'] >
-                  c3['close'] and c3['open'] > c2['close']):
+            elif (c1['open'] < c1['close'] and c2['open'] < c2['close'] and c3['open'] > c3['close'] and c3['open'] > c2['close']):
                 obs.append(OrderBlock(-1, c3.name, c3['high'], c3['low']))
+                logger.debug(f"Bearish OB gedetecteerd op {c3.name}")
+
+        logger.info(f"Totaal gedetecteerde order blocks: {len(obs)}")
+        # Bij geen order blocks, log wat voorbeelddata
+        if len(obs) == 0 and len(df) > 5:
+            logger.info("Voorbeeld candle data (laatste 5 rijen):")
+            for i in range(1, 6):
+                candle = df.iloc[-i]
+                logger.info(
+                    f"Candle {df.index[-i]}: Open={candle['open']:.5f}, Close={candle['close']:.5f}, High={candle['high']:.5f}, Low={candle['low']:.5f}")
 
         return obs
 
@@ -91,8 +102,11 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         Bereken Fibonacci retracement levels.
         """
         diff = swing_high - swing_low
-        return {'61.8%': swing_high - 0.618 * diff, '50.0%': swing_high - 0.5 * diff,
-                '38.2%': swing_high - 0.382 * diff, }
+        return {
+            '61.8%': swing_high - 0.618 * diff,
+            '50.0%': swing_high - 0.5 * diff,
+            '38.2%': swing_high - 0.382 * diff
+        }
 
     def prepare_lstm_input(self, df: pd.DataFrame) -> np.ndarray:
         """
@@ -135,6 +149,9 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         sl_stop = pd.Series(self.sl_fixed_percent, index=df.index)
         tp_stop = pd.Series(self.tp_fixed_percent, index=df.index)
 
+        logger.info(
+            f"Start signaal generatie voor {len(df)} candles, timeframe: {df.index[1] - df.index[0]}")
+
         # Detecteer order blocks
         order_blocks = self.detect_order_blocks(df)
         if not order_blocks:
@@ -147,14 +164,23 @@ class OrderBlockLSTMStrategy(BaseStrategy):
             X_in = self.prepare_lstm_input(df)
             try:
                 lstm_pred = self.model.predict(X_in, verbose=0)[0][0]
-                logger.info(f"LSTM predictie: {lstm_pred:.4f}")
+                logger.info(
+                    f"LSTM predictie: {lstm_pred:.4f}, threshold: {self.lstm_threshold}")
             except Exception as e:
                 logger.error(f"LSTM predictie mislukt: {str(e)}")
+        else:
+            logger.warning("Geen LSTM model beschikbaar")
 
         # Loop door order blocks om signalen te genereren
         current_price = df['close'].iloc[-1]
+        logger.info(f"Huidige prijs: {current_price:.5f}")
 
         for ob in order_blocks:
+            # Toon alleen recente order blocks (laatste 20% van de data)
+            time_threshold = df.index[int(len(df) * 0.8)]
+            if ob.time < time_threshold:
+                continue
+
             # Bereken Fibonacci niveaus
             past_data = df.loc[:ob.time]
             if past_data.empty:
@@ -164,17 +190,35 @@ class OrderBlockLSTMStrategy(BaseStrategy):
             swing_low = past_data['low'].min()
             fib = self.calculate_fibonacci_levels(swing_high, swing_low)
 
-            # Genereer signaal op de meest recente candle als aan voorwaarden wordt voldaan
-            if ob.direction == 1 and fib[
-                '61.8%'] <= current_price <= ob.high and lstm_pred > self.lstm_threshold:
-                # Bullish signaal
-                entries.iloc[-1] = True
-                logger.info(f"Bullish signaal gegenereerd op {df.index[-1]}")
-            elif ob.direction == -1 and ob.low <= current_price <= fib[
-                '61.8%'] and lstm_pred < -self.lstm_threshold:
-                # Bearish signaal (niet ondersteund in deze implementatie)
+            logger.info(
+                f"Order Block: {'Bullish' if ob.direction == 1 else 'Bearish'} op {ob.time}")
+            logger.info(f"  Range: {ob.low:.5f} - {ob.high:.5f}")
+            logger.info(f"  Fibonacci 61.8%: {fib['61.8%']:.5f}")
+
+            # Check voor bullish signaal condities
+            if ob.direction == 1:
+                in_fib_zone = fib['61.8%'] <= current_price <= ob.high
+                lstm_ok = lstm_pred > self.lstm_threshold
+                logger.info(f"  In Fib zone: {in_fib_zone}, LSTM OK: {lstm_ok}")
+
+                if in_fib_zone and lstm_ok:
+                    # Bullish signaal
+                    entries.iloc[-1] = True
+                    logger.info(f"❗ Bullish signaal gegenereerd op {df.index[-1]}")
+
+            # Check voor bearish signaal condities (niet ondersteund in deze versie)
+            elif ob.direction == -1:
+                in_fib_zone = ob.low <= current_price <= fib['61.8%']
+                lstm_ok = lstm_pred < -self.lstm_threshold
+                logger.info(f"  In Fib zone: {in_fib_zone}, LSTM OK: {lstm_ok}")
+
+                # We genereren geen bearish signalen in deze implementatie
                 logger.info(
                     f"Bearish signaal gedetecteerd maar alleen long posities worden ondersteund")
+
+        # Log eindresultaat
+        signal_count = entries.sum()
+        logger.info(f"Aantal gegenereerde signalen: {signal_count}")
 
         return entries, sl_stop, tp_stop
 

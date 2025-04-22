@@ -42,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--use_trailing_stop", action="store_true", help="Gebruik trailing stop")
     parser.add_argument("--trailing_stop_percent", type=float, help="Trailing stop percentage")
     parser.add_argument("--confidence_level", type=float, default=0.95, help="VaR confidence level")
+    parser.add_argument("--model_path", type=str, help="Pad naar getraind LSTM model (.h5 bestand)")
     return parser.parse_args()
 
 
@@ -63,7 +64,7 @@ def load_parameters(args: argparse.Namespace) -> Dict[str, Any]:
 
     direct_params: List[str] = ['window', 'std_dev', 'sl_fixed_percent', 'tp_fixed_percent',
                                'risk_per_trade', 'use_trailing_stop', 'trailing_stop_percent',
-                               'confidence_level']
+                               'confidence_level', 'model_path']  # model_path toegevoegd!
     for param in direct_params:
         value = getattr(args, param, None)
         if value is not None:
