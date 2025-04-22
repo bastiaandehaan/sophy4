@@ -23,23 +23,59 @@ from config import logger
 def create_sequences(df: pd.DataFrame, seq_len: int = 60) -> tuple:
     """
     Maak sequenties voor LSTM training van OHLCV data.
+
+    Args:
+        df: DataFrame met OHLC data
+        seq_len: Sequentielengte voor LSTM
+
+    Returns:
+        Tuple van (X, y) data
     """
     X, y = [], []
+
+    # Controleer welke volume kolom beschikbaar is
+    volume_column = None
+    for possible_name in ['volume', 'tick_volume', 'real_volume']:
+        if possible_name in df.columns:
+            volume_column = possible_name
+            logger.info(f"Volume kolom gevonden: '{volume_column}'")
+            break
+
+    # Als geen volume kolom gevonden, maak een dummy kolom met waarde 1
+    if volume_column is None:
+        logger.warning("Geen volume kolom gevonden, gebruik dummy waarden")
+        df['volume_dummy'] = 1.0
+        volume_column = 'volume_dummy'
+
+    # Normaliseer volume (om numerieke stabiliteitsproblemen te voorkomen)
+    df[f'{volume_column}_norm'] = df[volume_column] / df[volume_column].rolling(
+        window=20).mean().fillna(1)
+
     # Bereken prijsveranderingen als target
     df['target'] = df['close'].pct_change(5).shift(-5)  # 5-bar toekomstige verandering
 
+    # Log de eerste paar rijen om te debuggen
+    logger.info(f"DataFrame voor sequence creation:\n{df.head().to_string()}")
+
+    # Controleer of er voldoende data is na NaN verwijdering
+    df_clean = df.dropna()
+    if len(df_clean) < seq_len + 5:
+        logger.warning(f"Te weinig data na NaN verwijdering: {len(df_clean)} rijen")
+        return np.array([]), np.array([])
+
     # Loop door de data om sequenties te maken
-    for i in range(len(df) - seq_len - 5):
-        # Feature sequentie
-        seq = df.iloc[i:i + seq_len][['close', 'volume']].values
+    for i in range(len(df_clean) - seq_len - 5):
+        # Feature sequentie (gebruik genormaliseerde volume)
+        seq = df_clean.iloc[i:i + seq_len][['close', f'{volume_column}_norm']].values
         X.append(seq)
 
         # Target (tussen -1 en 1 met tanh)
-        target = df.iloc[i + seq_len]['target']
+        target = df_clean.iloc[i + seq_len]['target']
         # Schaal tussen -1 en 1
         target = np.tanh(target * 10)  # *10 voor betere schaling
         y.append(target)
 
+    logger.info(f"Aantal sequenties gecreëerd: {len(X)}")
     return np.array(X), np.array(y)
 
 
@@ -53,17 +89,23 @@ def train_and_save_model(symbol: str, timeframe: str = "H1", days: int = 500,
 
     if df is None or df.empty:
         logger.error(f"Geen data ontvangen voor {symbol}")
-        return
+        return None
 
-    logger.info(f"Data geladen: {len(df)} rijen")
+    logger.info(f"Data geladen: {len(df)} rijen, kolommen: {list(df.columns)}")
 
     # Maak sequenties
     X, y = create_sequences(df, seq_len)
-    logger.info(f"Sequenties gemaakt: {len(X)} samples")
+    if len(X) == 0:
+        logger.error("Geen sequenties konden worden gemaakt")
+        return None
+
+    logger.info(f"Sequenties gemaakt: {len(X)} samples, shape: {X.shape}")
 
     if len(X) < 100:
-        logger.error("Te weinig data voor model training")
-        return
+        logger.warning("Weinig data voor model training (<100 samples)")
+        if len(X) < 20:
+            logger.error("Te weinig data voor model training")
+            return None
 
     # Train-test split (80-20)
     split = int(len(X) * 0.8)
@@ -83,7 +125,7 @@ def train_and_save_model(symbol: str, timeframe: str = "H1", days: int = 500,
     # Train
     logger.info("Start training...")
     model.fit(X_train, y_train, validation_data=(X_test, y_test), epochs=20,
-        batch_size=32, verbose=1)
+              batch_size=32, verbose=1)
 
     # Maak output directory
     Path(output).mkdir(parents=True, exist_ok=True)
@@ -108,6 +150,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     model_path = train_and_save_model(args.symbol, args.timeframe, args.days,
-        args.seq_len, args.output)
+                                      args.seq_len, args.output)
 
-    print(f"Model succesvol getraind en opgeslagen: {model_path}")
+    if model_path:
+        print(f"Model succesvol getraind en opgeslagen: {model_path}")
+    else:
+        print("Model training mislukt")

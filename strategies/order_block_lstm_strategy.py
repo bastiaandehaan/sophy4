@@ -92,7 +92,7 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         """
         diff = swing_high - swing_low
         return {'61.8%': swing_high - 0.618 * diff, '50.0%': swing_high - 0.5 * diff,
-            '38.2%': swing_high - 0.382 * diff, }
+                '38.2%': swing_high - 0.382 * diff, }
 
     def prepare_lstm_input(self, df: pd.DataFrame) -> np.ndarray:
         """
@@ -103,9 +103,25 @@ class OrderBlockLSTMStrategy(BaseStrategy):
                 f"Te weinig data voor LSTM (nodig: {self.window}, beschikbaar: {len(df)})")
             return np.zeros((1, self.window, 2))  # Fallback empty input
 
+        # Controleer welke volume kolom beschikbaar is
+        volume_column = None
+        for possible_name in ['volume', 'tick_volume', 'real_volume']:
+            if possible_name in df.columns:
+                volume_column = possible_name
+                break
+
+        # Als geen volume kolom gevonden, maak een dummy kolom
+        if volume_column is None:
+            df['volume_dummy'] = 1.0
+            volume_column = 'volume_dummy'
+
+        # Normaliseer volume
+        df[f'{volume_column}_norm'] = df[volume_column] / df[volume_column].rolling(
+            window=20).mean().fillna(1)
+
         # Extract the most recent window of close and volume data
         recent_data = df.iloc[-self.window:]
-        seq = [[row['close'], row.get('volume', 0)] for _, row in
+        seq = [[row['close'], row.get(f'{volume_column}_norm', 1.0)] for _, row in
                recent_data.iterrows()]
         return np.array(seq).reshape(1, self.window, 2)
 
@@ -168,11 +184,12 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         Geef default parameters voor de strategie.
         """
         return {'window': [30, 50, 60], 'lstm_threshold': [0.0, 0.1, 0.2],
-            'sl_fixed_percent': [0.01, 0.015, 0.02],
-            'tp_fixed_percent': [0.02, 0.03, 0.04], 'use_trailing_stop': [True, False],
-            'trailing_stop_percent': [0.01, 0.015, 0.02],
-            'risk_per_trade': [0.005, 0.01, 0.02],
-            'confidence_level': [0.90, 0.95, 0.99]}
+                'sl_fixed_percent': [0.01, 0.015, 0.02],
+                'tp_fixed_percent': [0.02, 0.03, 0.04],
+                'use_trailing_stop': [True, False],
+                'trailing_stop_percent': [0.01, 0.015, 0.02],
+                'risk_per_trade': [0.005, 0.01, 0.02],
+                'confidence_level': [0.90, 0.95, 0.99]}
 
     @classmethod
     def get_parameter_descriptions(cls) -> Dict[str, str]:
@@ -180,11 +197,11 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         Beschrijf parameters voor documentatie.
         """
         return {'window': 'Aantal perioden voor LSTM input sequentie',
-            'lstm_threshold': 'Drempelwaarde voor LSTM signalen (0 tot 1)',
-            'sl_fixed_percent': 'Stop-loss als vast percentage',
-            'tp_fixed_percent': 'Take-profit als vast percentage',
-            'use_trailing_stop': 'Trailing stop activeren (true/false)',
-            'trailing_stop_percent': 'Trailing stop als vast percentage',
-            'risk_per_trade': 'Risico per trade als percentage van portfolio (0.01 = 1%)',
-            'confidence_level': 'Betrouwbaarheidsniveau voor VaR-berekening',
-            'model_path': 'Pad naar voorgetraind LSTM-model (.h5 bestand)'}
+                'lstm_threshold': 'Drempelwaarde voor LSTM signalen (0 tot 1)',
+                'sl_fixed_percent': 'Stop-loss als vast percentage',
+                'tp_fixed_percent': 'Take-profit als vast percentage',
+                'use_trailing_stop': 'Trailing stop activeren (true/false)',
+                'trailing_stop_percent': 'Trailing stop als vast percentage',
+                'risk_per_trade': 'Risico per trade als percentage van portfolio (0.01 = 1%)',
+                'confidence_level': 'Betrouwbaarheidsniveau voor VaR-berekening',
+                'model_path': 'Pad naar voorgetraind LSTM-model (.h5 bestand)'}
