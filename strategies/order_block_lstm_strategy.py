@@ -53,6 +53,9 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         self.risk_per_trade = risk_per_trade
         self.confidence_level = confidence_level
 
+        # Debug modus activeren (altijd aan in deze versie)
+        self.debug_mode = True
+
         # Laad model, indien beschikbaar
         self.model = None
         if model_path and os.path.exists(model_path):
@@ -67,32 +70,138 @@ class OrderBlockLSTMStrategy(BaseStrategy):
 
     def detect_order_blocks(self, df: pd.DataFrame) -> List[OrderBlock]:
         """
-        Detecteer order blocks in de data.
+        Detecteer order blocks in de data met verbeterde logging.
         """
         obs = []
         logger.info(f"Data lengte voor order block detectie: {len(df)}")
 
+        # Debug info: Toon voorbeelden van enkele candles
+        if self.debug_mode and len(df) >= 10:
+            logger.info("Voorbeeld van de eerste 5 candles:")
+            for i in range(5):
+                candle = df.iloc[i]
+                logger.info(
+                    f"Candle {i + 1}: Open={candle['open']:.5f}, Close={candle['close']:.5f}, "
+                    f"High={candle['high']:.5f}, Low={candle['low']:.5f}")
+
+        # Tellers voor debugging
+        bullish_ob_count = 0
+        bearish_ob_count = 0
+        checked_candles = 0
+
         for i in range(len(df) - 3):
+            checked_candles += 1
+
+            # Zorg voor toegang tot 3 opeenvolgende candles
+            if i + 2 >= len(df):
+                continue
+
             c1, c2, c3 = df.iloc[i], df.iloc[i + 1], df.iloc[i + 2]
 
-            # Bearish->Bearish->Bullish engulf = Bullish OB
-            if (c1['open'] > c1['close'] and c2['open'] > c2['close'] and c3['open'] < c3['close'] and c3['open'] < c2['close']):
+            # Debug: Log candle patronen bij elke 50e candle voor inzicht
+            if self.debug_mode and i % 50 == 0:
+                logger.debug(f"Checking candles at index {i}:")
+                logger.debug(f"  C1: Open={c1['open']:.5f}, Close={c1['close']:.5f}")
+                logger.debug(f"  C2: Open={c2['open']:.5f}, Close={c2['close']:.5f}")
+                logger.debug(f"  C3: Open={c3['open']:.5f}, Close={c3['close']:.5f}")
+
+            # Detecteer Bullish OB: Bearish->Bearish->Bullish engulf
+            if (c1['open'] > c1['close'] and  # C1 bearish
+                    c2['open'] > c2['close'] and  # C2 bearish
+                    c3['open'] < c3['close'] and  # C3 bullish
+                    c3['open'] < c2['close']):  # C3 open onder C2 close (engulfing)
+
                 obs.append(OrderBlock(1, c3.name, c3['high'], c3['low']))
-                logger.debug(f"Bullish OB gedetecteerd op {c3.name}")
+                bullish_ob_count += 1
 
-            # Bullish->Bullish->Bearish engulf = Bearish OB
-            elif (c1['open'] < c1['close'] and c2['open'] < c2['close'] and c3['open'] > c3['close'] and c3['open'] > c2['close']):
+                # Gedetailleerde info over gevonden OB
+                if self.debug_mode:
+                    logger.info(f"Bullish OB gedetecteerd op {c3.name}: "
+                                f"Range={c3['low']:.5f}-{c3['high']:.5f}")
+
+            # Detecteer Bearish OB: Bullish->Bullish->Bearish engulf
+            elif (c1['open'] < c1['close'] and  # C1 bullish
+                  c2['open'] < c2['close'] and  # C2 bullish
+                  c3['open'] > c3['close'] and  # C3 bearish
+                  c3['open'] > c2['close']):  # C3 open boven C2 close (engulfing)
+
                 obs.append(OrderBlock(-1, c3.name, c3['high'], c3['low']))
-                logger.debug(f"Bearish OB gedetecteerd op {c3.name}")
+                bearish_ob_count += 1
 
-        logger.info(f"Totaal gedetecteerde order blocks: {len(obs)}")
-        # Bij geen order blocks, log wat voorbeelddata
-        if len(obs) == 0 and len(df) > 5:
-            logger.info("Voorbeeld candle data (laatste 5 rijen):")
-            for i in range(1, 6):
-                candle = df.iloc[-i]
-                logger.info(
-                    f"Candle {df.index[-i]}: Open={candle['open']:.5f}, Close={candle['close']:.5f}, High={candle['high']:.5f}, Low={candle['low']:.5f}")
+                # Gedetailleerde info over gevonden OB
+                if self.debug_mode:
+                    logger.info(f"Bearish OB gedetecteerd op {c3.name}: "
+                                f"Range={c3['low']:.5f}-{c3['high']:.5f}")
+
+        logger.info(f"Order Block detectie resultaten:")
+        logger.info(f"  Geanalyseerde candles: {checked_candles}")
+        logger.info(f"  Bullish OBs gevonden: {bullish_ob_count}")
+        logger.info(f"  Bearish OBs gevonden: {bearish_ob_count}")
+        logger.info(f"  Totaal gevonden: {len(obs)}")
+
+        # Bij geen order blocks, geef diagnose
+        if len(obs) == 0 and len(df) > 5 and self.debug_mode:
+            logger.warning(
+                "Geen order blocks gedetecteerd. Verificatie van candle patterns:")
+
+            # Tellers voor patronen die bijna een OB vormen
+            almost_bullish = 0
+            almost_bearish = 0
+            missing_engulf_bullish = 0
+            missing_engulf_bearish = 0
+
+            # Voorbeelden van bijna-matchende patronen bewaren
+            examples = []
+
+            for i in range(len(df) - 3):
+                if i + 2 >= len(df):
+                    continue
+
+                c1, c2, c3 = df.iloc[i], df.iloc[i + 1], df.iloc[i + 2]
+
+                # Check patronen die bijna werken - voor diagnose
+                if (c1['open'] > c1['close'] and c2['open'] > c2['close'] and c3[
+                    'open'] < c3['close']):
+                    almost_bullish += 1
+
+                    # Check specifiek het engulfing criterium
+                    if not (c3['open'] < c2['close']):
+                        missing_engulf_bullish += 1
+
+                        # Bewaar enkele voorbeelden
+                        if len(examples) < 5:
+                            examples.append(
+                                {"index": i, "time": c3.name, "type": "bijna-bullish",
+                                    "c2_close": c2['close'], "c3_open": c3['open'],
+                                    "reden": "c3_open niet onder c2_close"})
+
+                if (c1['open'] < c1['close'] and c2['open'] < c2['close'] and c3[
+                    'open'] > c3['close']):
+                    almost_bearish += 1
+
+                    # Check specifiek het engulfing criterium
+                    if not (c3['open'] > c2['close']):
+                        missing_engulf_bearish += 1
+
+                        # Bewaar enkele voorbeelden
+                        if len(examples) < 10:
+                            examples.append(
+                                {"index": i, "time": c3.name, "type": "bijna-bearish",
+                                    "c2_close": c2['close'], "c3_open": c3['open'],
+                                    "reden": "c3_open niet boven c2_close"})
+
+            logger.info(
+                f"Bijna-matchende patronen: {almost_bullish} bijna-bullish, {almost_bearish} bijna-bearish")
+            logger.info(
+                f"  Ontbrekende engulfing: {missing_engulf_bullish} bullish, {missing_engulf_bearish} bearish")
+
+            # Toon enkele voorbeelden van bijna-matchende patronen
+            if examples:
+                logger.info("Voorbeelden van bijna-matchende patronen:")
+                for i, example in enumerate(examples):
+                    logger.info(
+                        f"  {i + 1}. {example['type']} op {example['time']}: {example['reden']} "
+                        f"(c2_close={example['c2_close']:.5f}, c3_open={example['c3_open']:.5f})")
 
         return obs
 
@@ -102,11 +211,8 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         Bereken Fibonacci retracement levels.
         """
         diff = swing_high - swing_low
-        return {
-            '61.8%': swing_high - 0.618 * diff,
-            '50.0%': swing_high - 0.5 * diff,
-            '38.2%': swing_high - 0.382 * diff
-        }
+        return {'61.8%': swing_high - 0.618 * diff, '50.0%': swing_high - 0.5 * diff,
+            '38.2%': swing_high - 0.382 * diff}
 
     def prepare_lstm_input(self, df: pd.DataFrame) -> np.ndarray:
         """
@@ -150,12 +256,12 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         tp_stop = pd.Series(self.tp_fixed_percent, index=df.index)
 
         logger.info(
-            f"Start signaal generatie voor {len(df)} candles, timeframe: {df.index[1] - df.index[0]}")
+            f"Start signaal generatie voor {len(df)} candles, timeframe: {df.index[1] - df.index[0] if len(df) > 1 else 'onbekend'}")
 
         # Detecteer order blocks
         order_blocks = self.detect_order_blocks(df)
         if not order_blocks:
-            logger.info("Geen order blocks gedetecteerd")
+            logger.info("Geen order blocks gedetecteerd, kan geen signalen genereren")
             return entries, sl_stop, tp_stop
 
         # Bereid LSTM-voorspelling voor als model beschikbaar is
@@ -169,21 +275,39 @@ class OrderBlockLSTMStrategy(BaseStrategy):
             except Exception as e:
                 logger.error(f"LSTM predictie mislukt: {str(e)}")
         else:
-            logger.warning("Geen LSTM model beschikbaar")
+            logger.warning(
+                "Geen LSTM model beschikbaar, gebruik standaard LSTM-waarde van 0")
 
         # Loop door order blocks om signalen te genereren
         current_price = df['close'].iloc[-1]
         logger.info(f"Huidige prijs: {current_price:.5f}")
 
+        # We kijken alleen naar Order Blocks in laatste 20% van de data
+        # Dit is de originele code zoals in de oorspronkelijke strategie
+        time_threshold = df.index[int(len(df) * 0.8)]
+        logger.info(f"Tijdsfilter: Alleen OBs na {time_threshold} worden bekeken")
+
+        # Variabelen voor diagnose
+        signals_checked = 0
+        in_fib_zone_count = 0
+        lstm_ok_count = 0
+        recent_ob_count = 0
+
         for ob in order_blocks:
-            # Toon alleen recente order blocks (laatste 20% van de data)
-            time_threshold = df.index[int(len(df) * 0.8)]
+            signals_checked += 1
+
+            # Tijdsfilter toepassen - alleen recente OBs bekijken
             if ob.time < time_threshold:
+                if self.debug_mode:
+                    logger.debug(f"OB op {ob.time} genegeerd (te oud)")
                 continue
+
+            recent_ob_count += 1
 
             # Bereken Fibonacci niveaus
             past_data = df.loc[:ob.time]
             if past_data.empty:
+                logger.debug(f"Geen historische data voor OB op {ob.time}")
                 continue
 
             swing_high = past_data['high'].max()
@@ -191,15 +315,26 @@ class OrderBlockLSTMStrategy(BaseStrategy):
             fib = self.calculate_fibonacci_levels(swing_high, swing_low)
 
             logger.info(
-                f"Order Block: {'Bullish' if ob.direction == 1 else 'Bearish'} op {ob.time}")
-            logger.info(f"  Range: {ob.low:.5f} - {ob.high:.5f}")
-            logger.info(f"  Fibonacci 61.8%: {fib['61.8%']:.5f}")
+                f"Order Block #{signals_checked}: {'Bullish' if ob.direction == 1 else 'Bearish'} op {ob.time}")
+            logger.info(f"  Prijsbereik: {ob.low:.5f} - {ob.high:.5f}")
+            logger.info(
+                f"  Fibonacci niveaus: 61.8%={fib['61.8%']:.5f}, 50.0%={fib['50.0%']:.5f}, 38.2%={fib['38.2%']:.5f}")
 
             # Check voor bullish signaal condities
             if ob.direction == 1:
                 in_fib_zone = fib['61.8%'] <= current_price <= ob.high
                 lstm_ok = lstm_pred > self.lstm_threshold
-                logger.info(f"  In Fib zone: {in_fib_zone}, LSTM OK: {lstm_ok}")
+
+                # Tellingen bijwerken voor diagnostiek
+                if in_fib_zone:
+                    in_fib_zone_count += 1
+                if lstm_ok:
+                    lstm_ok_count += 1
+
+                logger.info(
+                    f"  Bullish signaal check: Prijs in Fib zone: {in_fib_zone}, LSTM OK: {lstm_ok}")
+                logger.info(
+                    f"  Details: current_price={current_price:.5f}, fib_61.8={fib['61.8%']:.5f}, ob_high={ob.high:.5f}")
 
                 if in_fib_zone and lstm_ok:
                     # Bullish signaal
@@ -210,15 +345,30 @@ class OrderBlockLSTMStrategy(BaseStrategy):
             elif ob.direction == -1:
                 in_fib_zone = ob.low <= current_price <= fib['61.8%']
                 lstm_ok = lstm_pred < -self.lstm_threshold
-                logger.info(f"  In Fib zone: {in_fib_zone}, LSTM OK: {lstm_ok}")
+
+                # Tellingen bijwerken voor diagnostiek
+                if in_fib_zone:
+                    in_fib_zone_count += 1
+                if lstm_ok:
+                    lstm_ok_count += 1
+
+                logger.info(
+                    f"  Bearish signaal check: Prijs in Fib zone: {in_fib_zone}, LSTM OK: {lstm_ok}")
+                logger.info(
+                    f"  Details: current_price={current_price:.5f}, fib_61.8={fib['61.8%']:.5f}, ob_low={ob.low:.5f}")
 
                 # We genereren geen bearish signalen in deze implementatie
                 logger.info(
-                    f"Bearish signaal gedetecteerd maar alleen long posities worden ondersteund")
+                    f"  Bearish signaal gedetecteerd maar alleen long posities worden ondersteund")
 
-        # Log eindresultaat
+        # Log eindresultaat en diagnostiek
         signal_count = entries.sum()
-        logger.info(f"Aantal gegenereerde signalen: {signal_count}")
+        logger.info(f"Signaal generatie diagnostiek:")
+        logger.info(f"  Totaal Order Blocks: {len(order_blocks)}")
+        logger.info(f"  Recente Order Blocks (na tijdsfilter): {recent_ob_count}")
+        logger.info(f"  Prijzen in Fibonacci zone: {in_fib_zone_count}")
+        logger.info(f"  LSTM voorspellingen boven threshold: {lstm_ok_count}")
+        logger.info(f"  Totaal aantal gegenereerde signalen: {signal_count}")
 
         return entries, sl_stop, tp_stop
 

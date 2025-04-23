@@ -1,3 +1,4 @@
+# backtest/data_loader.py
 from datetime import datetime, timedelta
 from typing import Optional, Union, Dict
 
@@ -8,9 +9,9 @@ from config import logger
 
 # Timeframe mapping van string naar MT5 constante
 TIMEFRAME_MAP: Dict[str, int] = {'M1': mt5.TIMEFRAME_M1, 'M5': mt5.TIMEFRAME_M5,
-    'M15': mt5.TIMEFRAME_M15, 'M30': mt5.TIMEFRAME_M30, 'H1': mt5.TIMEFRAME_H1,
-    'H4': mt5.TIMEFRAME_H4, 'D1': mt5.TIMEFRAME_D1, 'W1': mt5.TIMEFRAME_W1,
-    'MN1': mt5.TIMEFRAME_MN1}
+                                 'M15': mt5.TIMEFRAME_M15, 'M30': mt5.TIMEFRAME_M30, 'H1': mt5.TIMEFRAME_H1,
+                                 'H4': mt5.TIMEFRAME_H4, 'D1': mt5.TIMEFRAME_D1, 'W1': mt5.TIMEFRAME_W1,
+                                 'MN1': mt5.TIMEFRAME_MN1}
 
 
 def _convert_timeframe(timeframe: Union[str, int]) -> int:
@@ -41,7 +42,7 @@ def _convert_timeframe(timeframe: Union[str, int]) -> int:
 
 
 def fetch_historical_data(symbol: str, timeframe: Union[str, int] = mt5.TIMEFRAME_D1,
-        days: int = 1095, end_date: Optional[datetime] = None) -> Optional[
+                          days: int = 1095, end_date: Optional[datetime] = None) -> Optional[
     pd.DataFrame]:
     """
     Haalt historische data op via MetaTrader 5.
@@ -129,7 +130,7 @@ def fetch_historical_data(symbol: str, timeframe: Union[str, int] = mt5.TIMEFRAM
 
 
 def fetch_live_data(symbol: str, timeframe: Union[str, int] = mt5.TIMEFRAME_D1) -> \
-Optional[pd.DataFrame]:
+        Optional[pd.DataFrame]:
     """
     Haalt de meest recente candle op via MetaTrader 5.
 

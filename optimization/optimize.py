@@ -23,7 +23,8 @@ from backtest.backtest import run_extended_backtest
 from config import logger, OUTPUT_DIR
 from risk.risk_management import RiskManager
 from strategies import get_strategy, STRATEGIES
-from utils.data_utils import fetch_historical_data
+from backtest.data_loader import fetch_historical_data
+
 
 # Maak een summary logger
 summary_logger = logging.getLogger("summary")

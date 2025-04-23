@@ -1,8 +1,10 @@
 # strategies/base_strategy.py
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Tuple
+from typing import Dict, List, Any, Tuple, Optional, Union
+from datetime import datetime
 
 import pandas as pd
+import MetaTrader5 as mt5
 
 
 class BaseStrategy(ABC):
@@ -68,3 +70,44 @@ class BaseStrategy(ABC):
             Lijst met metrics in volgorde van belangrijkheid
         """
         return ["sharpe_ratio", "calmar_ratio", "total_return", "max_drawdown", "win_rate"]
+
+    @staticmethod
+    def fetch_historical_data(symbol: str, timeframe: Union[str, int] = mt5.TIMEFRAME_D1,
+                              days: int = 1095, end_date: Optional[datetime] = None) -> Optional[pd.DataFrame]:
+        """
+        Haalt historische data op via MetaTrader 5.
+
+        Deze methode is een doorverwijzing naar backtest.data_loader.fetch_historical_data
+        en biedt strategieën direct toegang tot historische data.
+
+        Args:
+            symbol: Trading symbool (bijv. 'GER40.cash').
+            timeframe: MT5 timeframe constante of string (bijv. mt5.TIMEFRAME_D1 of 'D1').
+            days: Aantal dagen historische data.
+            end_date: Einddatum (standaard: nu).
+
+        Returns:
+            DataFrame met OHLC-data of None bij fout.
+        """
+        # Importeer hier om circulaire imports te voorkomen
+        from backtest.data_loader import fetch_historical_data as fetch_data
+        return fetch_data(symbol, timeframe, days, end_date)
+
+    @staticmethod
+    def fetch_live_data(symbol: str, timeframe: Union[str, int] = mt5.TIMEFRAME_D1) -> Optional[pd.DataFrame]:
+        """
+        Haalt de meest recente candle op via MetaTrader 5.
+
+        Deze methode is een doorverwijzing naar backtest.data_loader.fetch_live_data
+        en biedt strategieën direct toegang tot live marktdata.
+
+        Args:
+            symbol: Trading symbool (bijv. 'GER40.cash').
+            timeframe: MT5 timeframe constante of string (bijv. mt5.TIMEFRAME_D1 of 'D1').
+
+        Returns:
+            DataFrame met de laatste candle of None bij fout.
+        """
+        # Importeer hier om circulaire imports te voorkomen
+        from backtest.data_loader import fetch_live_data as fetch_data
+        return fetch_data(symbol, timeframe)

@@ -43,8 +43,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--trailing_stop_percent", type=float, help="Trailing stop percentage")
     parser.add_argument("--confidence_level", type=float, default=0.95, help="VaR confidence level")
     parser.add_argument("--model_path", type=str, help="Pad naar getraind LSTM model (.h5 bestand)")
+    parser.add_argument("--time_filter_pct", type=float, help="Percentage van tijd voor trading filter")
     return parser.parse_args()
-
 
 def load_parameters(args: argparse.Namespace) -> Dict[str, Any]:
     """Laad parameters van commandline of params_file."""

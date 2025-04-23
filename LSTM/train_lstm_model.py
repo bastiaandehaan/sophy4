@@ -1,9 +1,10 @@
 # strategies/train_lstm_model.py
 import argparse
+import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
-from pathlib import Path
-import sys
 
 # TensorFlow imports
 try:
@@ -16,7 +17,7 @@ except ImportError:
 # Voeg projectroot toe aan Python path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from utils.data_utils import fetch_historical_data
+from backtest.data_loader import fetch_historical_data
 from config import logger
 
 
