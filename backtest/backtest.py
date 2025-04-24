@@ -73,9 +73,10 @@ def calculate_metrics(pf: vbt.Portfolio) -> Dict[str, Any]:
         else:
             metrics['calmar_ratio'] = 0.0
 
-        # Win rate
+        # Win rate - FIX: correctie aanroep van win_rate
         if len(pf.trades) > 0:
-            metrics['win_rate'] = pf.trades.win_rate
+            # Controleer of win_rate een callable is (methode) of een eigenschap
+            metrics['win_rate'] = pf.trades.win_rate() if callable(pf.trades.win_rate) else pf.trades.win_rate
             metrics['trades_count'] = len(pf.trades)
             metrics['avg_winning_trade'] = pf.trades.winning.pnl.mean() if len(pf.trades.winning) > 0 else 0
             metrics['avg_losing_trade'] = pf.trades.losing.pnl.mean() if len(pf.trades.losing) > 0 else 0

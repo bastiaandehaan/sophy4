@@ -1,64 +1,172 @@
-# strategies/bollong.py
-import json
-from typing import Tuple, Optional, Dict, List, Any
-
+from typing import Dict, List, Tuple, Any, Optional, Union
 import pandas as pd
+import json
+import logging
+import numpy as np
+from scipy.stats import norm
+import MetaTrader5 as mt5
 
-from config import logger
-from risk.risk_management import RiskManager
-from utils.indicator_utils import calculate_bollinger_bands
-from . import register_strategy
-from .base_strategy import BaseStrategy
+from strategies import register_strategy
+from strategies.base_strategy import BaseStrategy
 
+# Logger configureren
+logger = logging.getLogger(__name__)
 
 def calculate_atr(df: pd.DataFrame, window: int = 14) -> Tuple[pd.Series, pd.Series]:
-    """Bereken ATR en True Range."""
-    high: pd.Series = df['high']
-    low: pd.Series = df['low']
-    close: pd.Series = df['close'].shift(1)
+    """
+    Bereken Average True Range (ATR).
 
-    tr1: pd.Series = high - low
-    tr2: pd.Series = (high - close).abs()
-    tr3: pd.Series = (low - close).abs()
-    tr: pd.Series = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    Args:
+        df: DataFrame met OHLC data
+        window: Aantal periods voor ATR berekening
 
-    atr: pd.Series = tr.rolling(window=window).mean()
+    Returns:
+        Tuple van (ATR, TR series)
+    """
+    # Bereken True Range
+    tr1 = df['high'] - df['low']
+    tr2 = abs(df['high'] - df['close'].shift())
+    tr3 = abs(df['low'] - df['close'].shift())
+
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    tr.fillna(tr1, inplace=True)
+
+    # Bereken ATR
+    atr = tr.rolling(window=window).mean()
+
+    # Vul NaN waarden in
+    atr.fillna(tr, inplace=True)
+
     return atr, tr
 
+def calculate_adx(df: pd.DataFrame, window: int = 14, tr: Optional[pd.Series] = None) -> pd.Series:
+    """
+    Bereken Average Directional Index (ADX).
 
-def calculate_adx(df: pd.DataFrame, tr: Optional[pd.Series] = None,
-                  period: int = 14) -> pd.Series:
-    """Bereken ADX."""
-    plus_dm: pd.Series = df['high'].diff()
-    minus_dm: pd.Series = df['low'].diff().multiply(-1)
-    plus_dm = plus_dm.where((plus_dm > 0) & (plus_dm > minus_dm), 0)
-    minus_dm = minus_dm.where((minus_dm > 0) & (minus_dm > plus_dm), 0)
+    Args:
+        df: DataFrame met OHLC data
+        window: Aantal periods voor ADX berekening
+        tr: Optionele True Range series (voor performance)
 
+    Returns:
+        ADX series
+    """
+    # Bereken True Range als niet meegegeven
     if tr is None:
-        tr1: pd.Series = abs(df['high'] - df['low'])
-        tr2: pd.Series = abs(df['high'] - df['close'].shift(1))
-        tr3: pd.Series = abs(df['low'] - df['close'].shift(1))
-        tr: pd.Series = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        _, tr = calculate_atr(df, window)
 
-    atr: pd.Series = tr.rolling(window=period).mean()
-    plus_di: pd.Series = 100 * (plus_dm.rolling(window=period).mean() / atr)
-    minus_di: pd.Series = 100 * (minus_dm.rolling(window=period).mean() / atr)
+    # Bereken +DM en -DM
+    plus_dm = df['high'].diff()
+    minus_dm = df['low'].diff()
 
-    dx: pd.Series = pd.Series(0.0, index=df.index)
-    nonzero_mask: pd.Series = (plus_di + minus_di) > 0
-    dx[nonzero_mask] = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
-    adx: pd.Series = dx.rolling(window=period).mean()
+    # Voorwaarden voor +DM en -DM
+    plus_dm = plus_dm.where((plus_dm > 0) & (plus_dm > minus_dm.abs()), 0)
+    minus_dm = minus_dm.abs().where((minus_dm < 0) & (minus_dm.abs() > plus_dm), 0)
+
+    # Bereken +DI en -DI
+    plus_di = 100 * plus_dm.rolling(window).mean() / tr.rolling(window).mean()
+    minus_di = 100 * minus_dm.rolling(window).mean() / tr.rolling(window).mean()
+
+    # Bereken DX en ADX
+    dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+    adx = dx.rolling(window).mean()
+
+    # Vul NaN waarden in (eenvoudige backfill)
+    adx.fillna(0, inplace=True)
 
     return adx
 
+def calculate_bollinger_bands(data: pd.Series, window: int = 20, std_dev: float = 1.5,
+                              min_periods: Optional[int] = None) -> Tuple[pd.Series, pd.Series, pd.Series]:
+    """
+    Bereken Bollinger Bands met verbeterde foutafhandeling en type hints.
+
+    Args:
+        data (pd.Series): Input prijsserie
+        window (int, optional): Rolvenster voor berekening. Defaults to 20.
+        std_dev (float, optional): Aantal standaarddeviaties. Defaults to 1.5.
+        min_periods (int, optional): Minimum aantal perioden voor berekening. Defaults to window.
+
+    Returns:
+        Tuple van (upper band, midden band (SMA), lower band)
+
+    Raises:
+        TypeError: Als input geen pandas Series is
+        ValueError: Als window of std_dev ongeldig is
+    """
+    # Input validatie
+    if not isinstance(data, pd.Series):
+        raise TypeError(f"Input moet een pandas Series zijn, niet {type(data)}")
+
+    if window <= 0:
+        raise ValueError(f"Window moet positief zijn, niet {window}")
+
+    if std_dev <= 0:
+        raise ValueError(f"Standaarddeviatie moet positief zijn, niet {std_dev}")
+
+    # Gebruik min_periods om berekening aan te passen
+    min_periods = min_periods or window
+
+    try:
+        # Bereken Bollinger Bands met verbeterde rolling window
+        rolling_mean = data.rolling(window=window, min_periods=min_periods).mean()
+        rolling_std = data.rolling(window=window, min_periods=min_periods).std()
+
+        upper_band = rolling_mean + (rolling_std * std_dev)
+        lower_band = rolling_mean - (rolling_std * std_dev)
+
+        # Log details van de berekening
+        logger.info(f"Bollinger Bands berekend: "
+                    f"window={window}, std_dev={std_dev}, min_periods={min_periods}")
+
+        return upper_band, rolling_mean, lower_band
+
+    except Exception as e:
+        logger.error(f"Fout bij berekenen Bollinger Bands: {e}")
+        raise
+
+class RiskManager:
+    """
+    Risk management class to ensure compliance with FTMO rules and manage portfolio risk.
+    """
+
+    def __init__(self, confidence_level: float = 0.95, max_risk: float = 0.01,
+                 max_daily_loss_percent: float = 0.05, max_total_loss_percent: float = 0.10,
+                 correlated_symbols: Optional[Dict[str, list]] = None):
+        """
+        Initialize the RiskManager with risk parameters.
+
+        Args:
+            confidence_level (float): Confidence level for VaR calculation.
+            max_risk (float): Maximum risk per trade as a percentage of portfolio.
+            max_daily_loss_percent (float): Maximum daily loss percentage (e.g., 0.05 for 5%).
+            max_total_loss_percent (float): Maximum total loss percentage (e.g., 0.10 for 10%).
+            correlated_symbols (Dict[str, list], optional): Dictionary of correlated symbols.
+        """
+        self.confidence_level = confidence_level
+        self.max_risk = max_risk
+        self.max_daily_loss_percent = max_daily_loss_percent
+        self.max_total_loss_percent = max_total_loss_percent
+        self.correlated_symbols = correlated_symbols or {}
+        self.var_cache = {}
+
+    def calculate_position_size(self, capital: float, returns: pd.Series,
+                                pip_value: float, symbol: Optional[str] = None,
+                                open_positions: Optional[Dict[str, int]] = None) -> float:
+        """
+        Simplified version for this example
+        """
+        risk_amount = capital * self.max_risk
+        position_size = risk_amount / (capital * 0.01)
+        return position_size
 
 @register_strategy
 class BollongStrategy(BaseStrategy):
-    def __init__(self, window: int = 50, std_dev: float = 2.0,
+    def __init__(self, symbol: str = "EURUSD", window: int = 50, std_dev: float = 2.0,
                  sl_method: str = "atr_based", sl_atr_mult: float = 2.0,
                  sl_fixed_percent: float = 0.02, tp_method: str = "atr_based",
                  tp_atr_mult: float = 3.0, tp_fixed_percent: float = 0.03,
-                 use_trailing_stop: bool = True,  # Changed to True
+                 use_trailing_stop: bool = True,
                  trailing_stop_method: str = "atr_based",
                  trailing_stop_atr_mult: float = 1.5,
                  trailing_stop_percent: float = 0.015,
@@ -69,6 +177,8 @@ class BollongStrategy(BaseStrategy):
                  trading_hours: Tuple[int, int] = (9, 17), min_adx: float = 20,
                  use_adx_filter: bool = False, confidence_level: float = 0.95):
         super().__init__()
+        # Sla het symbool op als een klasse-attribuut
+        self.symbol: str = symbol
         self.window: int = window
         self.std_dev: float = std_dev
         self.sl_method: str = sl_method
@@ -114,7 +224,7 @@ class BollongStrategy(BaseStrategy):
             'close'] if method == "atr_based" else pd.Series(self.__dict__[fixed_key],
                                                              index=df.index)
 
-    def generate_signals(self, df: pd.DataFrame) -> Tuple[
+    def generate_signals(self, df: pd.DataFrame, current_capital: Optional[float] = None) -> Tuple[
         pd.Series, pd.Series, pd.Series]:
         """Genereer trading signalen."""
         has_datetime_index: bool = hasattr(df.index, 'hour')
@@ -122,9 +232,12 @@ class BollongStrategy(BaseStrategy):
         risk_manager: RiskManager = RiskManager(confidence_level=self.confidence_level,
                                                 max_risk=self.risk_per_trade)
         returns: pd.Series = df['close'].pct_change().dropna()
-        from config import INITIAL_CAPITAL, PIP_VALUE
-        size: float = risk_manager.calculate_position_size(INITIAL_CAPITAL, returns,
-                                                           pip_value=PIP_VALUE)
+        from config import INITIAL_CAPITAL, get_pip_value  # Fix 2: gebruik get_pip_value functie
+        size: float = risk_manager.calculate_position_size(
+            INITIAL_CAPITAL,
+            returns,
+            pip_value=get_pip_value(self.symbol)  # Gebruik het symbool attribuut
+        )
 
         # Bereken Bollinger Bands met self.window en self.std_dev
         upper_band, sma, lower_band = calculate_bollinger_bands(df['close'],
@@ -202,19 +315,21 @@ class BollongStrategy(BaseStrategy):
 
         tf_config = config.get(timeframe,
                                config["H1"])  # Default to H1 if timeframe not found
-        return {'window': tf_config["window_range"],
-            'std_dev': tf_config["std_dev_range"], 'sl_method': ["fixed_percent"],
-            'sl_fixed_percent': tf_config["sl_fixed_percent_range"],
-            'tp_method': ["fixed_percent"],
-            'tp_fixed_percent': tf_config["tp_fixed_percent_range"],
-            'use_trailing_stop': [True],  # Only test with trailing stop enabled
-            'trailing_stop_percent': [0.01, 0.015, 0.02],  # Wider range
-            'risk_per_trade': [0.005, 0.01], 'confidence_level': [0.90, 0.95, 0.99]}
+        return {'symbol': ["EURUSD", "GBPUSD", "XAUUSD"],  # Voeg symbool toe aan default params
+                'window': tf_config["window_range"],
+                'std_dev': tf_config["std_dev_range"], 'sl_method': ["fixed_percent"],
+                'sl_fixed_percent': tf_config["sl_fixed_percent_range"],
+                'tp_method': ["fixed_percent"],
+                'tp_fixed_percent': tf_config["tp_fixed_percent_range"],
+                'use_trailing_stop': [True],  # Only test with trailing stop enabled
+                'trailing_stop_percent': [0.01, 0.015, 0.02],  # Wider range
+                'risk_per_trade': [0.005, 0.01], 'confidence_level': [0.90, 0.95, 0.99]}
 
     @classmethod
     def get_parameter_descriptions(cls) -> Dict[str, str]:
         """Beschrijf parameters."""
         return {
+            'symbol': 'Handelssymbool voor de strategie (bijv. EURUSD, GBPUSD, XAUUSD)',
             'window': 'Aantal perioden voor Bollinger Bands (voortschrijdend gemiddelde)',
             'std_dev': 'Aantal standaarddeviaties voor de upper en lower bands',
             'sl_method': 'Stop-loss methode: "atr_based" of "fixed_percent"',

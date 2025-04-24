@@ -1,13 +1,15 @@
 import logging
-from typing import Dict, Optional, Tuple, Union
+from typing import Dict, Optional, Tuple, Union, Any
 import numpy as np
 import pandas as pd
 import MetaTrader5 as mt5
 from scipy.stats import norm
+# Import VectorBT
+import vectorbt as vbt
 
 # Configureer een lokale logger
 logging.basicConfig(level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s')
+                    format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
@@ -348,6 +350,10 @@ class RiskManager:
         logger.info("VaR cache cleared")
 
 def calculate_metrics(pf: vbt.Portfolio) -> Dict[str, Any]:
+    """
+    Berekent de prestatiemetrieken van een portfolio.
+    """
+    # Rest of the function remains the same
     """
     Berekent de prestatiemetrieken van een portfolio.
     """
