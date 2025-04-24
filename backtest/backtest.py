@@ -185,10 +185,35 @@ def run_extended_backtest(strategy_name: str, parameters: Dict[str, Any], symbol
             confidence_level=parameters.get('confidence_level', 0.95),
             max_risk=parameters.get('risk_per_trade', 0.01)
         )
+
+        # Bereken rendementen voor VaR
         returns: pd.Series = df['close'].pct_change().dropna()
-        pip_value: float = 10.0  # TODO: Maak dynamisch per symbool
-        size: float = risk_manager.calculate_position_size(initial_capital, returns, pip_value)
-        logger.info(f"VaR-gebaseerde positiegrootte: {size}")
+
+        # Haal dynamische pip-waarde op via RiskManager
+        symbol_info = risk_manager.get_symbol_info(symbol)
+        if symbol_info:
+            pip_value = symbol_info["pip_value"]
+            logger.info(f"Dynamische pip-waarde voor {symbol}: {pip_value}")
+        else:
+            pip_value = 10.0  # Fallback waarde
+            logger.warning(f"Kon pip-waarde niet ophalen voor {symbol}, fallback naar {pip_value}")
+
+        # Gebruik historische spread uit de DataFrame (in punten), converteer naar prijs-eenheden
+        if 'spread' in df.columns and not df['spread'].empty:
+            avg_spread = df['spread'].mean() * pip_value  # Spread in prijs-eenheden
+            logger.info(f"Gemiddelde spread voor {symbol}: {avg_spread} (gebaseerd op historische data)")
+        else:
+            avg_spread = 0.0
+            logger.warning(f"Geen spread-data beschikbaar in DataFrame voor {symbol}, spread ingesteld op 0")
+
+        # Bereken positiegrootte met dynamische pip-waarde en historische spread
+        size: float = risk_manager.calculate_position_size(
+            capital=initial_capital,
+            returns=returns,
+            pip_value=pip_value,
+            symbol=symbol
+        )
+        logger.info(f"VaR-gebaseerde positiegrootte voor {symbol}: {size}")
         print(f"DEBUG: Positiegrootte berekend: {size}")
 
         # Generate signals
@@ -220,8 +245,14 @@ def run_extended_backtest(strategy_name: str, parameters: Dict[str, Any], symbol
         # Create portfolio
         print("DEBUG: Portfolio voorbereiden")
         portfolio_kwargs: Dict[str, Any] = {
-            'close': df['close'], 'entries': entries, 'sl_stop': sl_stop, 'tp_stop': tp_stop,
-            'init_cash': initial_capital, 'fees': FEES, 'freq': freq, 'size': size,
+            'close': df['close'],
+            'entries': entries,
+            'sl_stop': sl_stop,
+            'tp_stop': tp_stop,
+            'init_cash': initial_capital,
+            'fees': FEES,
+            'freq': freq,
+            'size': size,
         }
 
         _calculate_stop(portfolio_kwargs, parameters)

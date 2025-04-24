@@ -7,11 +7,11 @@ import argparse
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List  # Added List to resolve the errors
+from typing import Dict, Any, List
 
 from backtest.backtest import run_extended_backtest, run_monte_carlo_simulation, \
     run_walk_forward_test
-from config import SYMBOL, logger, INITIAL_CAPITAL
+from config import logger, INITIAL_CAPITAL, SYMBOLS
 from ftmo_compliance.ftmo_check import check_ftmo_compliance
 from monitor.monitor import monitor_performance
 from optimization.optimize import quick_optimize
@@ -23,9 +23,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Sophy4 Trading Framework")
     parser.add_argument("--mode", type=str, choices=["backtest", "optimize", "monte_carlo", "walk_forward"],
                         default="backtest", help="Operatie modus")
-    parser.add_argument("--symbol", type=str, default=SYMBOL, help=f"Trading symbool (default: {SYMBOL})")
-    parser.add_argument("--strategy", type=str, default="BollongStrategy", help="Strategie om te gebruiken")
-    parser.add_argument("--timeframe", type=str, default="D1", help="Timeframe (bijv. M15, H1, D1)")
+    parser.add_argument("--symbol", type=str, default=SYMBOLS[0], help=f"Trading symbool (default: {SYMBOLS[0]})")
+    parser.add_argument("--strategy", type=str, default="OrderBlockLSTMStrategy", help="Strategie om te gebruiken")
+    parser.add_argument("--timeframe", type=str, default="H1", help="Timeframe (bijv. M15, H1, D1)")
     parser.add_argument("--days", type=int, default=1095, help="Aantal dagen historische data")
     parser.add_argument("--params_file", type=str, help="JSON bestand met parameters")
     parser.add_argument("--params_index", type=int, default=0, help="Index in het params bestand (0 = beste)")
@@ -46,6 +46,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--time_filter_pct", type=float, help="Percentage van tijd voor trading filter")
     return parser.parse_args()
 
+
 def load_parameters(args: argparse.Namespace) -> Dict[str, Any]:
     """Laad parameters van commandline of params_file."""
     parameters: Dict[str, Any] = {}
@@ -64,13 +65,32 @@ def load_parameters(args: argparse.Namespace) -> Dict[str, Any]:
 
     direct_params: List[str] = ['window', 'std_dev', 'sl_fixed_percent', 'tp_fixed_percent',
                                'risk_per_trade', 'use_trailing_stop', 'trailing_stop_percent',
-                               'confidence_level', 'model_path']  # model_path toegevoegd!
+                               'confidence_level', 'model_path', 'time_filter_pct']
     for param in direct_params:
         value = getattr(args, param, None)
         if value is not None:
             parameters[param] = value
 
+    # Voeg symbol expliciet toe aan parameters
+    parameters['symbol'] = args.symbol
+
     return parameters
+
+
+def save_results_to_json(strategy: str, symbol: str, results: Dict[str, Any]) -> None:
+    """
+    Save results to a JSON file with a timestamp.
+
+    Args:
+        strategy (str): Name of the strategy.
+        symbol (str): Trading symbol.
+        results (Dict[str, Any]): Results to save.
+    """
+    output_path: Path = Path("results")
+    output_path.mkdir(exist_ok=True)
+    timestamp: str = datetime.now().strftime("%Y%m%d_%H%M")
+    with open(output_path / f"{strategy}_{symbol}_walkforward_{timestamp}.json", 'w') as f:
+        json.dump(results, f, indent=2, default=str)
 
 
 def main() -> None:
@@ -80,6 +100,10 @@ def main() -> None:
     if args.strategy not in STRATEGIES:
         available_strategies: str = ", ".join(STRATEGIES.keys())
         logger.error(f"Strategie '{args.strategy}' niet gevonden. Beschikbare strategieën: {available_strategies}")
+        return
+
+    if args.symbol not in SYMBOLS:
+        logger.error(f"Symbool '{args.symbol}' niet in geconfigureerde SYMBOLS: {SYMBOLS}")
         return
 
     if args.mode == "backtest":
@@ -105,6 +129,10 @@ def main() -> None:
             print(f"Win rate: {metrics['win_rate']:.2%}")
             print(f"Aantal trades: {metrics['trades_count']}")
             print(f"FTMO compliant: {'JA' if compliant else 'NEE'}")
+            print(f"Profit target bereikt: {'JA' if profit_target else 'NEE'}")
+        else:
+            logger.error("Backtest failed to produce results.")
+            print("Backtest failed. Check logs for details.")
 
     elif args.mode == "monte_carlo":
         parameters: Dict[str, Any] = load_parameters(args)
@@ -125,6 +153,7 @@ def main() -> None:
             print(f"Worst-case drawdown (95%): {mc_results['drawdown_95ci']:.2%}")
         else:
             logger.error("Onvoldoende trades voor Monte Carlo simulatie")
+            print("Onvoldoende trades voor Monte Carlo simulatie. Minimaal 10 trades nodig.")
 
     elif args.mode == "optimize":
         logger.info(f"Start optimalisatie: {args.strategy} op {args.symbol}")
@@ -154,11 +183,10 @@ def main() -> None:
             print(f"Sharpe ratio (Test/Train): {results['robustness']['sharpe_ratio']:.2f}")
             print(f"Strategie is {'ROBUUST' if results['robustness']['is_robust'] else 'NIET ROBUUST'}")
 
-            output_path: Path = Path("results")
-            output_path.mkdir(exist_ok=True)
-            timestamp: str = datetime.now().strftime("%Y%m%d_%H%M")
-            with open(output_path / f"{args.strategy}_{args.symbol}_walkforward_{timestamp}.json", 'w') as f:
-                json.dump(results, f, indent=2, default=str)
+            save_results_to_json(args.strategy, args.symbol, results)
+        else:
+            logger.error("Walk-forward test failed to produce results.")
+            print("Walk-forward test failed. Check logs for details.")
 
 
 if __name__ == "__main__":

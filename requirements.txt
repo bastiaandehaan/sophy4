@@ -124,3 +124,8 @@ webcolors==24.11.1
 webencodings==0.5.1
 websocket-client==1.8.0
 widgetsnbextension==4.0.13
+tensorflow>=2.10.0
+pandas>=1.5.0
+numpy>=1.23.0
+scikit-learn>=1.2.0
+MetaTrader5>=5.0.0

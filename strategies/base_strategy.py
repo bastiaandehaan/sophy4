@@ -17,15 +17,19 @@ class BaseStrategy(ABC):
         self.name: str = self.__class__.__name__
 
     @abstractmethod
-    def generate_signals(self, df: pd.DataFrame) -> Tuple[pd.Series, pd.Series, pd.Series]:
+    def generate_signals(self, df: pd.DataFrame, current_capital: Optional[float] = None) -> Tuple[pd.Series, ...]:
         """
         Genereer trading signalen op basis van de data.
 
         Args:
             df: DataFrame met OHLC data
+            current_capital: Huidig kapitaal (optioneel, voor dynamische positiegrootte)
 
         Returns:
-            Tuple van (entries, sl_stop, tp_stop) - Series met entry signalen en stop percentages
+            Tuple van Series: Minimaal (entries, sl_stop, tp_stop), optioneel meer (bijv. trailing_stop, position_sizes)
+            - entries: 1 voor kopen, -1 voor verkopen, 0 voor niets
+            - sl_stop: Stop-loss percentage
+            - tp_stop: Take-profit percentage
         """
         pass
 

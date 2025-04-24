@@ -4,20 +4,31 @@
         "window_range": [5, 10, 15, 20],
         "std_dev_range": [1.0, 1.5, 2.0],
         "sl_fixed_percent_range": [0.005, 0.01, 0.015],
-        "tp_fixed_percent_range": [0.01, 0.02, 0.03]
+        "tp_fixed_percent_range": [0.01, 0.02, 0.03],
+        "lstm_threshold_range": [0.2, 0.3, 0.4],
+        "risk_per_trade_range": [0.005, 0.01, 0.015],
+        "fib_lookback_range": [5, 10, 15]
     },
     "H1": {
         "freq": "1h",
         "window_range": [10, 15, 20, 25, 30],
         "std_dev_range": [1.5, 1.75, 2.0],
         "sl_fixed_percent_range": [0.01, 0.015, 0.02],
-        "tp_fixed_percent_range": [0.02, 0.03, 0.04]
+        "tp_fixed_percent_range": [0.02, 0.03, 0.04],
+        "lstm_threshold_range": [0.2, 0.3, 0.4],
+        "risk_per_trade_range": [0.005, 0.01, 0.015],
+        "fib_lookback_range": [10, 20, 30],
+        "use_trailing_stop": [false, true],
+        "trailing_stop_percent_range": [0.01, 0.015, 0.02]
     },
     "D1": {
         "freq": "1d",
         "window_range": [20, 30, 40, 50, 60],
         "std_dev_range": [2.0, 2.5, 3.0],
         "sl_fixed_percent_range": [0.02, 0.03, 0.04],
-        "tp_fixed_percent_range": [0.04, 0.05, 0.06]
+        "tp_fixed_percent_range": [0.04, 0.05, 0.06],
+        "lstm_threshold_range": [0.2, 0.3, 0.4],
+        "risk_per_trade_range": [0.005, 0.01, 0.015],
+        "fib_lookback_range": [20, 30, 40]
     }
 }
