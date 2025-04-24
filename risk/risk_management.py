@@ -6,25 +6,19 @@ import MetaTrader5 as mt5
 from scipy.stats import norm
 
 # Configureer een lokale logger
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
 
 class RiskManager:
     """
     Risk management class to ensure compliance with FTMO rules and manage portfolio risk.
     """
 
-    def __init__(
-        self,
-        confidence_level: float = 0.95,
-        max_risk: float = 0.01,
-        max_daily_loss_percent: float = 0.05,
-        max_total_loss_percent: float = 0.10,
-        correlated_symbols: Optional[Dict[str, list]] = None
-    ):
+    def __init__(self, confidence_level: float = 0.95, max_risk: float = 0.01,
+            max_daily_loss_percent: float = 0.05, max_total_loss_percent: float = 0.10,
+            correlated_symbols: Optional[Dict[str, list]] = None):
         """
         Initialize the RiskManager with risk parameters.
 
@@ -63,19 +57,16 @@ class RiskManager:
                 return None
 
             # Use trade_tick_value for tick value
-            tick_value = symbol_info.trade_tick_value if hasattr(symbol_info, 'trade_tick_value') else 10.0
+            tick_value = symbol_info.trade_tick_value if hasattr(symbol_info,
+                                                                 'trade_tick_value') else 10.0
 
             # Bereken pip-waarde dynamisch
             pip_value = symbol_info.point * symbol_info.trade_contract_size
             spread = symbol_info.spread * symbol_info.point  # Spread in prijs-eenheden
 
-            return {
-                "pip_value": pip_value,
-                "spread": spread,
-                "tick_value": tick_value,
+            return {"pip_value": pip_value, "spread": spread, "tick_value": tick_value,
                 "tick_size": symbol_info.tick_size,
-                "contract_size": symbol_info.trade_contract_size
-            }
+                "contract_size": symbol_info.trade_contract_size}
 
         except Exception as e:
             logger.error(f"Error retrieving symbol info for {symbol}: {str(e)}")
@@ -95,12 +86,14 @@ class RiskManager:
         """
         try:
             if not mt5.initialize():
-                logger.warning(f"MT5 initialization failed for {symbol}. Assuming market is closed.")
+                logger.warning(
+                    f"MT5 initialization failed for {symbol}. Assuming market is closed.")
                 return False
 
             symbol_info = mt5.symbol_info(symbol)
             if symbol_info is None:
-                logger.warning(f"Cannot retrieve symbol info for {symbol}. Assuming market is closed.")
+                logger.warning(
+                    f"Cannot retrieve symbol info for {symbol}. Assuming market is closed.")
                 return False
 
             # Controleer of er recente ticks zijn (indicatie dat markt open is)
@@ -121,13 +114,9 @@ class RiskManager:
         finally:
             mt5.shutdown()
 
-    def calculate_var(
-        self,
-        returns: pd.Series,
-        capital: float,
-        symbol: Optional[str] = None,
-        open_positions: Optional[Dict[str, int]] = None
-    ) -> float:
+    def calculate_var(self, returns: pd.Series, capital: float,
+            symbol: Optional[str] = None,
+            open_positions: Optional[Dict[str, int]] = None) -> float:
         """
         Calculate Value at Risk (VaR) for the portfolio.
 
@@ -141,16 +130,13 @@ class RiskManager:
             float: VaR value at the specified confidence level.
         """
         if len(returns) < 10 or returns.empty:
-            logger.warning("No valid returns data provided for VaR calculation, returning default VaR")
+            logger.warning(
+                "No valid returns data provided for VaR calculation, returning default VaR")
             return 0.01  # Default VaR
 
         # Create a cache key based on inputs
-        cache_key = (
-            tuple(returns.values),
-            capital,
-            symbol if symbol else "",
-            tuple(sorted(open_positions.items())) if open_positions else ()
-        )
+        cache_key = (tuple(returns.values), capital, symbol if symbol else "",
+                     tuple(sorted(open_positions.items())) if open_positions else ())
 
         if cache_key in self.var_cache:
             return self.var_cache[cache_key]
@@ -177,14 +163,9 @@ class RiskManager:
         logger.debug(f"Calculated VaR for {symbol}: {var:.2f}")
         return var
 
-    def calculate_position_size(
-        self,
-        capital: float,
-        returns: pd.Series,
-        pip_value: float,
-        symbol: Optional[str] = None,
-        open_positions: Optional[Dict[str, int]] = None
-    ) -> float:
+    def calculate_position_size(self, capital: float, returns: pd.Series,
+            pip_value: float, symbol: Optional[str] = None,
+            open_positions: Optional[Dict[str, int]] = None) -> float:
         """
         Calculate the position size based on risk parameters, VaR, and dynamic market data.
 
@@ -206,13 +187,16 @@ class RiskManager:
             if symbol_info:
                 effective_pip_value = symbol_info["pip_value"]
                 spread_cost = symbol_info["spread"]
-                logger.info(f"Using dynamic pip value for {symbol}: {effective_pip_value}, spread: {spread_cost}")
+                logger.info(
+                    f"Using dynamic pip value for {symbol}: {effective_pip_value}, spread: {spread_cost}")
             else:
-                logger.warning(f"Failed to retrieve symbol info for {symbol}, using provided pip value: {pip_value}")
+                logger.warning(
+                    f"Failed to retrieve symbol info for {symbol}, using provided pip value: {pip_value}")
 
             # Controleer marktstatus (alleen relevant voor live trading, optioneel in backtest)
             if not self.is_market_open(symbol):
-                logger.warning(f"Market is closed for {symbol}. Position size set to 0.")
+                logger.warning(
+                    f"Market is closed for {symbol}. Position size set to 0.")
                 return 0.0
 
         risk_amount = capital * self.max_risk
@@ -220,7 +204,8 @@ class RiskManager:
 
         # Pas risico aan op basis van VaR
         if var > risk_amount:
-            logger.warning(f"VaR ({var:.2f}) exceeds risk limit ({risk_amount:.2f}). Reducing position size.")
+            logger.warning(
+                f"VaR ({var:.2f}) exceeds risk limit ({risk_amount:.2f}). Reducing position size.")
             risk_amount = min(risk_amount, var)
 
         # Schat punten in gevaar (gebruik een 1% prijsbeweging als proxy, of pas aan met sl_fixed_percent als beschikbaar)
@@ -238,14 +223,70 @@ class RiskManager:
         # Bereken positiegrootte: risk_amount = position_size * total_risk_per_unit
         position_size = risk_amount / total_risk_per_unit
         if position_size <= 0:
-            logger.warning("Calculated position size is zero or negative, using minimum size")
+            logger.warning(
+                "Calculated position size is zero or negative, using minimum size")
             position_size = 0.01  # Minimale positiegrootte
 
         # Beperk tot een redelijke maximum grootte
         position_size = min(position_size, 10.0)  # Max 10 lots
 
-        logger.info(f"Calculated position size for {symbol}: {position_size:.2f} lots (including spread cost: {spread_cost})")
+        logger.info(
+            f"Calculated position size for {symbol}: {position_size:.2f} lots (including spread cost: {spread_cost})")
         return position_size
+
+    def calculate_adjusted_position_size(self, capital: float, returns: pd.Series,
+            symbol: Optional[str] = None, price: Optional[float] = None,
+            open_positions: Optional[Dict[str, int]] = None) -> float:
+        """
+        Geavanceerde versie van calculate_position_size die ook rekening houdt met de huidige prijs.
+
+        Deze methode dient als compatibiliteitslaag voor OrderBlockLSTMStrategy.
+
+        Args:
+            capital (float): Huidig portfolio kapitaal.
+            returns (pd.Series): Historische returns van het asset.
+            symbol (str, optional): Symbool om te verhandelen.
+            price (float, optional): Huidige marktprijs.
+            open_positions (Dict[str, int], optional): Dictionary met open posities.
+
+        Returns:
+            float: Positiegrootte.
+        """
+        # Haal pip_value op voor het symbool
+        pip_value = 10.0  # Default waarde
+        if symbol:
+            # Haal dynamische symbool info op
+            symbol_info = self.get_symbol_info(symbol)
+            if symbol_info:
+                pip_value = symbol_info["pip_value"]
+                logger.info(f"Using dynamic pip value for {symbol}: {pip_value}")
+            else:
+                # Probeer uit config te halen
+                try:
+                    from config import PIP_VALUES
+                    if symbol in PIP_VALUES:
+                        pip_value = PIP_VALUES[symbol]
+                        logger.info(f"Using config pip value for {symbol}: {pip_value}")
+                except (ImportError, KeyError):
+                    logger.warning(
+                        f"No pip value found for {symbol}, using default: {pip_value}")
+
+        # Bereken stop-loss distance op basis van prijs (indien beschikbaar)
+        sl_distance = 0.01  # Default 1%
+        if hasattr(self, 'sl_fixed_percent'):
+            sl_distance = self.sl_fixed_percent
+
+        # Log de belangrijkste parameters
+        if price:
+            logger.info(
+                f"Adjusted position calculation for {symbol} at price {price:.2f}, SL distance: {sl_distance:.2%}")
+        else:
+            logger.info(
+                f"Adjusted position calculation for {symbol}, SL distance: {sl_distance:.2%}")
+
+        # Gebruik de bestaande methode voor de berekening
+        return self.calculate_position_size(capital=capital, returns=returns,
+            pip_value=pip_value, symbol=symbol, open_positions=open_positions)
 
     def monitor_drawdown(self, current_capital: float, max_value: float) -> bool:
         """
@@ -262,10 +303,12 @@ class RiskManager:
         total_loss = (max_value - current_capital) / max_value
 
         if daily_loss > self.max_daily_loss_percent:
-            logger.error(f"Daily loss ({daily_loss:.2%}) exceeds FTMO limit ({self.max_daily_loss_percent:.2%})")
+            logger.error(
+                f"Daily loss ({daily_loss:.2%}) exceeds FTMO limit ({self.max_daily_loss_percent:.2%})")
             return True
         if total_loss > self.max_total_loss_percent:
-            logger.error(f"Total loss ({total_loss:.2%}) exceeds FTMO limit ({self.max_total_loss_percent:.2%})")
+            logger.error(
+                f"Total loss ({total_loss:.2%}) exceeds FTMO limit ({self.max_total_loss_percent:.2%})")
             return True
         return False
 
@@ -303,3 +346,67 @@ class RiskManager:
         """
         self.var_cache.clear()
         logger.info("VaR cache cleared")
+
+def calculate_metrics(pf: vbt.Portfolio) -> Dict[str, Any]:
+    """
+    Berekent de prestatiemetrieken van een portfolio.
+    """
+    print("DEBUG: Metriek berekening gestart")
+    try:
+        metrics = {}
+
+        # Rendement berekenen (als percentage)
+        metrics['total_return'] = pf.total_return()
+
+        # Sharpe ratio
+        if not np.isnan(pf.sharpe_ratio()):
+            metrics['sharpe_ratio'] = pf.sharpe_ratio()
+        else:
+            metrics['sharpe_ratio'] = 0.0
+
+        # Sortino ratio
+        sortino = pf.sortino_ratio()
+        metrics['sortino_ratio'] = 0.0 if np.isnan(sortino) else sortino
+
+        # Drawdown
+        max_dd = pf.max_drawdown()
+        metrics['max_drawdown'] = 0.0 if np.isnan(max_dd) else max_dd
+
+        # CAGR (Compound Annual Growth Rate)
+        if pf.annualized_return() is not None and not np.isnan(pf.annualized_return()):
+            metrics['cagr'] = pf.annualized_return()
+        else:
+            metrics['cagr'] = 0.0
+
+        # Calmar ratio (verhouding rendement/max drawdown)
+        if metrics['cagr'] > 0 and metrics['max_drawdown'] < 0:
+            metrics['calmar_ratio'] = abs(metrics['cagr'] / metrics['max_drawdown'])
+        else:
+            metrics['calmar_ratio'] = 0.0
+
+        # Win rate
+        if len(pf.trades) > 0:
+            # Het verschil zit hier: roep de win_rate() methode aan
+            metrics['win_rate'] = pf.trades.win_rate() if callable(pf.trades.win_rate) else pf.trades.win_rate
+            metrics['trades_count'] = len(pf.trades)
+            metrics['avg_winning_trade'] = pf.trades.winning.pnl.mean() if len(pf.trades.winning) > 0 else 0
+            metrics['avg_losing_trade'] = pf.trades.losing.pnl.mean() if len(pf.trades.losing) > 0 else 0
+
+            # Profit factor (som van winsten / som van verliezen)
+            total_win = pf.trades.winning.pnl.sum() if len(pf.trades.winning) > 0 else 0
+            total_loss = abs(pf.trades.losing.pnl.sum()) if len(pf.trades.losing) > 0 else 0
+            metrics['profit_factor'] = total_win / total_loss if total_loss > 0 else float('inf')
+        else:
+            metrics['win_rate'] = 0.0
+            metrics['trades_count'] = 0
+            metrics['avg_winning_trade'] = 0.0
+            metrics['avg_losing_trade'] = 0.0
+            metrics['profit_factor'] = 0.0
+
+        print(f"DEBUG: Metrics berekend: {metrics}")
+        return metrics
+    except Exception as e:
+        print(f"FOUT bij berekenen metrics: {str(e)}")
+        logger.error(f"Fout bij berekenen metrics: {str(e)}", exc_info=True)
+        return {'total_return': 0.0, 'sharpe_ratio': 0.0, 'max_drawdown': 0.0,
+                'win_rate': 0.0, 'trades_count': 0}
