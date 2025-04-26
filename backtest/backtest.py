@@ -156,8 +156,11 @@ def run_extended_backtest(strategy_name: str, parameters: Dict[str, Any], symbol
     Returns:
         Tuple van (Portfolio-object of None, dictionary met metrics).
     """
-    print(f"\nDEBUG: Start backtest voor {strategy_name} op {symbol}")
-    print(f"DEBUG: Parameters: {parameters}")
+    print(f"\n{'='*60}")
+    print(f"=== START BACKTEST: {strategy_name} op {symbol} ===")
+    print(f"{'='*60}")
+    print(f"Parameters: {parameters}")
+    print(f"Timeframe: {timeframe}, Periode: {period_days} dagen")
 
     output_path: Path = Path(OUTPUT_DIR)
     output_path.mkdir(exist_ok=True, parents=True)
@@ -221,9 +224,10 @@ def run_extended_backtest(strategy_name: str, parameters: Dict[str, Any], symbol
         # Generate signals
         print(f"DEBUG: Strategie initialiseren: {strategy_name}")
         strategy = get_strategy(strategy_name, **parameters)
-        print("DEBUG: Strategie geïnitialiseerd, genereren signalen...")
+        print(f"Genereren signalen met {strategy_name}...")
 
         entries, sl_stop, tp_stop = strategy.generate_signals(df)
+        print(f"Signalen gegenereerd: {entries.sum()} entry signalen")
 
         print(f"DEBUG: Signalen gegenereerd:")
         print(f"DEBUG: Entries type: {type(entries)}, lengte: {len(entries)}, aantal True: {entries.sum()}")
