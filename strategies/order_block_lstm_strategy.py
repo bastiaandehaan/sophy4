@@ -1,544 +1,325 @@
-import os
-from typing import Tuple, List, Dict, Any, Optional
+import argparse
+from pathlib import Path
+from typing import Tuple, Dict, Any
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
 try:
-    from tensorflow.keras.models import load_model, Sequential
-    from tensorflow.keras.layers import Dense, Input, LSTM, Dropout
-    from tensorflow.keras.models import Model
     import tensorflow as tf
+    from tensorflow.keras.models import Sequential, load_model
+    from tensorflow.keras.layers import LSTM, Dense, Dropout, Layer, Input
+    from tensorflow.keras.optimizers import Adam
+    from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+    import keras_tuner as kt
 except ImportError:
-    print("TensorFlow not installed. Please run: pip install tensorflow")
+    print(
+        "TensorFlow or Keras Tuner not installed. Please run: pip install tensorflow keras-tuner")
     exit(1)
 
+import sys
+import os
+import vectorbt as vbt
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from config import logger
 from strategies.base_strategy import BaseStrategy
-from strategies import register_strategy
-from risk.risk_management import RiskManager
-
-try:
-    from config import logger, INITIAL_CAPITAL, SYMBOLS, CORRELATED_SYMBOLS, PIP_VALUES
-except ImportError as e:
-    print(f"Failed to import from config.py: {str(e)}")
-    print("Please ensure config.py is in the project root and has no errors.")
-    exit(1)
 
 
-class OrderBlock:
-    """Represents an order block zone in the market."""
+# Attention Layer for LSTM
+class AttentionLayer(Layer):
+    def __init__(self, **kwargs):
+        super(AttentionLayer, self).__init__(**kwargs)
 
-    def __init__(self, direction: int, time: pd.Timestamp, high: float, low: float):
-        self.direction = direction  # 1 = bullish, -1 = bearish
-        self.time = time
-        self.high = high
-        self.low = low
-        self.traded = False
+    def build(self, input_shape):
+        self.W = self.add_weight(name='attention_weight', shape=(input_shape[-1], 1),
+                                 initializer='random_normal', trainable=True)
+        self.b = self.add_weight(name='attention_bias', shape=(input_shape[1], 1),
+                                 initializer='zeros', trainable=True)
+        super(AttentionLayer, self).build(input_shape)
+
+    def call(self, inputs):
+        # Alignment scores
+        e = tf.keras.backend.tanh(tf.keras.backend.dot(inputs, self.W) + self.b)
+        # Attention weights
+        alpha = tf.keras.backend.softmax(e, axis=1)
+        # Context vector
+        context = inputs * alpha
+        context = tf.keras.backend.sum(context, axis=1)
+        return context
 
 
-@register_strategy
-class OrderBlockLSTMStrategy(BaseStrategy):
+def prepare_data(df: pd.DataFrame, seq_len: int, target_column: str = 'close',
+                 target_shift: int = 1, feature_columns: list = None) -> Tuple[
+    np.ndarray, np.ndarray, MinMaxScaler]:
     """
-    Trading strategy based on order blocks, Fibonacci retracements, and LSTM predictions.
+    Prepare data for LSTM training with enhanced feature engineering.
 
-    Version 2.2: Enhanced signal generation, relaxed trading criteria, and improved LSTM integration.
+    Args:
+        df (pd.DataFrame): DataFrame with OHLC data.
+        seq_len (int): Length of the sequence for LSTM input.
+        target_column (str): Column to predict (default: 'close').
+        target_shift (int): How many periods ahead to predict (default: 1).
+        feature_columns (list): Columns to use as features (default: OHLC).
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray, MinMaxScaler]: (X, y, scaler)
     """
-
-    def __init__(self, symbol: str = "XAUUSD", timeframe: str = "H1", window: int = 50,
-                 lstm_threshold: float = 0.03, sl_fixed_percent: float = 0.01,
-                 tp_fixed_percent: float = 0.025, use_trailing_stop: bool = False,
-                 trailing_stop_percent: float = 0.015, risk_per_trade: float = 0.02,
-                 confidence_level: float = 0.95, model_path: Optional[str] = None,
-                 verbose_logging: bool = False, fib_lookback: int = 20,
-                 initial_capital: float = INITIAL_CAPITAL):
-        """
-        Initialize the OrderBlockLSTMStrategy.
-
-        Args:
-            symbol (str): Trading symbol (e.g., XAUUSD).
-            timeframe (str): Timeframe (e.g., H1).
-            window (int): Number of periods for LSTM input sequence.
-            lstm_threshold (float): Threshold for LSTM signals (0 to 1).
-            sl_fixed_percent (float): Fixed stop-loss percentage.
-            tp_fixed_percent (float): Fixed take-profit percentage.
-            use_trailing_stop (bool): Whether to use trailing stop.
-            trailing_stop_percent (float): Trailing stop percentage.
-            risk_per_trade (float): Risk per trade as portfolio percentage (0.02 = 2%).
-            confidence_level (float): Confidence level for VaR calculation.
-            model_path (Optional[str]): Path to pre-trained LSTM model (.h5 file).
-            verbose_logging (bool): Enable detailed logging for debugging.
-            fib_lookback (int): Lookback period for Fibonacci swing high/low.
-            initial_capital (float): Initial account capital for risk management.
-        """
-        super().__init__()
-        if symbol not in SYMBOLS:
-            raise ValueError(f"Symbol {symbol} not in configured SYMBOLS: {SYMBOLS}")
-
-        self.symbol = symbol
-        self.timeframe = timeframe
-        self.window = window
-        self.lstm_threshold = lstm_threshold
-        self.sl_fixed_percent = sl_fixed_percent
-        self.tp_fixed_percent = tp_fixed_percent
-        self.use_trailing_stop = use_trailing_stop
-        self.trailing_stop_percent = trailing_stop_percent
-        self.risk_per_trade = risk_per_trade
-        self.confidence_level = confidence_level
-        self.verbose_logging = verbose_logging
-        self.fib_lookback = fib_lookback
-        self.initial_capital = initial_capital
-
-        # Initialize RiskManager with FTMO-compliant settings
-        self.risk_manager = RiskManager(confidence_level=self.confidence_level,
-                                        max_risk=self.risk_per_trade,
-                                        max_daily_loss_percent=0.05,
-                                        max_total_loss_percent=0.10,
-                                        correlated_symbols=CORRELATED_SYMBOLS)
-
-        print(f"\n==== OrderBlockLSTM Strategy v2.2 ({symbol}) ====")
-        print("Enhanced MQL5-based order block detection with relaxed trading criteria")
-        print(f"Parameters: window={window}, lstm_threshold={lstm_threshold}, "
-              f"sl={sl_fixed_percent}, tp={tp_fixed_percent}, risk={risk_per_trade}")
-
-        # Define mse function without decorator
-        def mse(y_true, y_pred):
-            return tf.keras.losses.mean_squared_error(y_true, y_pred)
-
-        # Load LSTM model with improved error handling
-        self.model = None
-        self.scaler = MinMaxScaler()
-        if model_path:
-            model_abs_path = os.path.abspath(model_path)
-            print(f"Attempting to load LSTM model from path: {model_abs_path}")
-            try:
-                if os.path.exists(model_abs_path):
-                    self.model = load_model(model_abs_path, custom_objects={'mse': mse},
-                                            compile=True)
-                    print(f"✅ LSTM model successfully loaded from {model_abs_path}")
-                    logger.info(f"LSTM model loaded from {model_abs_path}")
-                else:
-                    print(f"⚠️ Model file not found at {model_abs_path}")
-                    logger.warning(f"Model file not found at {model_abs_path}")
-            except Exception as e:
-                print(f"⚠️ Failed to load LSTM model: {str(e)}")
-                logger.error(f"Failed to load LSTM model: {str(e)}")
-        else:
-            logger.warning(
-                f"No LSTM model provided for {symbol}, using fallback logic (LSTM pred = 0)")
-            if self.verbose_logging:
-                print(f"No LSTM model provided for {symbol}, using fallback logic")
-
-        # Create fallback model if model loading failed
-        if self.model is None:
-            print("⚠️ Creating a fallback model for prediction")
-            try:
-                # Create a simple model that returns a constant prediction
-                input_layer = Input(shape=(self.window, 9))
-                dense = Dense(1, activation="linear")(input_layer)
-                fallback_model = Model(inputs=input_layer, outputs=dense)
-                fallback_model.compile(optimizer='adam', loss='mse')
-
-                # Test the prediction functionality
-                dummy_input = np.zeros((1, self.window, 9))
-                dummy_output = fallback_model.predict(dummy_input, verbose=0)
-
-                self.model = fallback_model
-                print(f"✅ Created fallback model successfully")
-            except Exception as e:
-                print(f"❌ Could not create fallback model: {str(e)}")
-                self.model = None
-
-    def get_symbol_info(self, symbol: str) -> Dict[str, float]:
-        """
-        Get symbol information with robust fallback values.
-
-        Args:
-            symbol (str): Trading symbol.
-
-        Returns:
-            Dict[str, float]: Symbol parameters with fallbacks.
-        """
-        import MetaTrader5 as mt5
-
-        try:
-            if not mt5.initialize():
-                logger.warning(f"MT5 initialization failed for {symbol}.")
-                return self._get_fallback_symbol_info(symbol)
-
-            symbol_info = mt5.symbol_info(symbol)
-            if symbol_info is None:
-                logger.warning(f"Symbol info not available for {symbol}.")
-                mt5.shutdown()
-                return self._get_fallback_symbol_info(symbol)
-
-            tick_value = getattr(symbol_info, 'trade_tick_value',
-                                 0.0001 if symbol.startswith(
-                                     ('EUR', 'GBP', 'AUD')) else 10.0)
-            point = symbol_info.point
-            trade_tick_size = getattr(symbol_info, 'trade_tick_size', point)
-
-            if symbol.startswith(('EUR', 'GBP', 'USD', 'AUD')):
-                pip_value = 0.0001
-                point = 0.00001
-            else:
-                pip_value = 1.0
-                point = 0.1
-
-            logger.info(f"Symbol info attributes for {symbol}: {dir(symbol_info)}")
-            mt5.shutdown()
-            return {"pip_value": pip_value, "spread": symbol_info.spread * point,
-                    "tick_value": tick_value,
-                    "contract_size": symbol_info.trade_contract_size, "point": point,
-                    "trade_tick_size": trade_tick_size}
-        except Exception as e:
-            logger.error(f"Error retrieving symbol info for {symbol}: {str(e)}")
-            mt5.shutdown()
-            return self._get_fallback_symbol_info(symbol)
-
-    def _get_fallback_symbol_info(self, symbol: str) -> Dict[str, float]:
-        """Fallback values based on symbol type."""
-        if symbol.startswith(('EUR', 'GBP', 'USD', 'AUD')):
-            return {"pip_value": 0.0001, "spread": 0.00002, "tick_value": 0.0001,
-                    "contract_size": 100000, "point": 0.00001,
-                    "trade_tick_size": 0.00001}
-        else:
-            return {"pip_value": 1.0, "spread": 0.5, "tick_value": 1.0,
-                    "contract_size": 1, "point": 0.1, "trade_tick_size": 0.1}
-
-    def detect_order_blocks(self, df: pd.DataFrame) -> List[OrderBlock]:
-        """
-        Detect order blocks based on MQL5 article logic with relaxed criteria.
-
-        Returns:
-            List[OrderBlock]: List of detected order blocks.
-        """
-        required_columns = ['open', 'high', 'low', 'close']
-        if not all(col in df.columns for col in required_columns):
-            raise ValueError(f"DataFrame missing required columns: {required_columns}")
-
-        obs = []
-        logger.info(f"Analyzing {len(df)} candles for order blocks ({self.symbol})")
-
-        bullish_count = 0
-        bearish_count = 0
-
-        for i in range(len(df) - 4):
-            if i + 3 >= len(df):
-                continue
-
-            c1, c2, c3, c4 = df.iloc[i], df.iloc[i + 1], df.iloc[i + 2], df.iloc[i + 3]
-
-            if (c1['close'] > c1['open'] and c2['close'] > c2['open'] and c3['close'] <
-                    c3['open'] and (c3['high'] - c3['low']) > (
-                    c2['high'] - c2['low']) * 1.1 and c3['open'] < c2['close']):
-                obs.append(OrderBlock(1, c3.name, c3['high'], c3['low']))
-                bullish_count += 1
-                if self.verbose_logging and bullish_count % 10 == 1:
-                    logger.info(
-                        f"Bullish OB at {c3.name}: {c3['low']:.5f}-{c3['high']:.5f} ({self.symbol})")
-                    print(
-                        f"Bullish OB at {c3.name}: {c3['low']:.5f}-{c3['high']:.5f} ({self.symbol})")
-
-            elif (c1['close'] < c1['open'] and c2['close'] < c2['open'] and c3[
-                'close'] > c3['open'] and (c3['high'] - c3['low']) > (
-                          c2['high'] - c2['low']) * 1.1 and c3['open'] > c2['close']):
-                obs.append(OrderBlock(-1, c3.name, c3['high'], c3['low']))
-                bearish_count += 1
-                if self.verbose_logging and bearish_count % 10 == 1:
-                    logger.info(
-                        f"Bearish OB at {c3.name}: {c3['low']:.5f}-{c3['high']:.5f} ({self.symbol})")
-                    print(
-                        f"Bearish OB at {c3.name}: {c3['low']:.5f}-{c3['high']:.5f} ({self.symbol})")
-
-        logger.info(
-            f"Order Blocks detected: {bullish_count} bullish, {bearish_count} bearish ({self.symbol})")
-        if self.verbose_logging:
-            print(
-                f"Order Blocks detected: {bullish_count} bullish, {bearish_count} bearish, total {len(obs)} ({self.symbol})")
-
-        if not obs and self.verbose_logging:
-            logger.warning(
-                f"No order blocks detected for {self.symbol}. Check data or pattern logic.")
-            print(
-                f"No order blocks detected for {self.symbol}. Verify data or pattern logic.")
-
-        return obs
-
-    def calculate_fibonacci_levels(self, swing_high: float, swing_low: float) -> Dict[
-        str, float]:
-        """
-        Calculate Fibonacci retracement levels.
-
-        Args:
-            swing_high (float): Swing high price.
-            swing_low (float): Swing low price.
-
-        Returns:
-            Dict[str, float]: Dictionary with Fibonacci levels (23.6%, 38.2%, 50.0%, 61.8%).
-        """
-        diff = swing_high - swing_low
-        return {'23.6%': swing_high - 0.236 * diff, '38.2%': swing_high - 0.382 * diff,
-                '50.0%': swing_high - 0.5 * diff, '61.8%': swing_high - 0.618 * diff}
-
-    def calculate_rsi(self, series: pd.Series, period: int = 14) -> pd.Series:
-        """Calculate RSI indicator."""
-        delta = series.diff()
-        gain = delta.clip(lower=0)
-        loss = -delta.clip(upper=0)
-        avg_gain = gain.rolling(window=period).mean()
-        avg_loss = loss.rolling(window=period).mean()
-        rs = avg_gain / avg_loss
-        rsi = 100 - (100 / (1 + rs))
-        return rsi
-
-    def prepare_lstm_input(self, df: pd.DataFrame) -> np.ndarray:
-        """
-        Prepare input for the LSTM model using enhanced features.
-
-        Returns:
-            np.ndarray: Normalized input array of shape (1, window, n_features).
-        """
-        if len(df) < self.window:
-            logger.warning(
-                f"Insufficient data for LSTM: need {self.window}, got {len(df)} ({self.symbol})")
-            return np.zeros((1, self.window, 9))
-
-        df = df.copy()
-        df['ma20'] = df['close'].rolling(window=20).mean()
-        df['ma50'] = df['close'].rolling(window=50).mean()
-        df['rsi'] = self.calculate_rsi(df['close'], 14)
-
-        feature_columns = ['open', 'high', 'low', 'close', 'tick_volume', 'ma20',
-                           'ma50', 'rsi']
-        if 'spread' in df.columns:
-            feature_columns.append('spread')
-
-        recent_data = df.iloc[-self.window:][feature_columns].fillna(
-            method='bfill').values
-        normalized_data = self.scaler.fit_transform(recent_data)
-        logger.info(f"LSTM input shape: {np.array([normalized_data]).shape}")
-        return np.array([normalized_data.reshape(self.window, len(feature_columns))])
-
-    def generate_signals(self, df: pd.DataFrame, current_capital: float = None) -> \
-            Tuple[pd.Series, pd.Series, pd.Series]:
-        """
-        Generate entry, stop-loss, and take-profit signals with improved criteria for more signals.
-
-        Args:
-            df (pd.DataFrame): DataFrame with OHLC data.
-            current_capital (float, optional): Current account capital. Defaults to initial_capital.
-
-        Returns:
-            Tuple[pd.Series, pd.Series, pd.Series]: (entries, sl_stop, tp_stop).
-            entries: 1 for buy, -1 for sell, 0 for hold.
-        """
-        print(
-            f"DEBUG: Analysing {len(df)} candles for OrderBlockLSTMStrategy with {self.symbol}")
-
-        required_columns = ['open', 'high', 'low', 'close']
-        if not all(col in df.columns for col in required_columns):
-            raise ValueError(
-                f"DataFrame missing required columns: {required_columns} for {self.symbol}")
-
-        entries = pd.Series(0, index=df.index, dtype=int)
-        sl_stop = pd.Series(self.sl_fixed_percent, index=df.index)
-        tp_stop = pd.Series(self.tp_fixed_percent, index=df.index)
-
-        if self.verbose_logging:
-            print(f"\nGenerating signals for {len(df)} candles ({self.symbol})...")
-        logger.info(f"Generating signals for {len(df)} candles ({self.symbol})")
-
-        capital = current_capital or self.initial_capital
-
-        max_value = capital
-        if self.risk_manager.monitor_drawdown(capital, max_value):
-            logger.warning(
-                f"Drawdown limit exceeded for {self.symbol}, no new signals generated")
-            return entries, sl_stop, tp_stop
-
-        max_daily_loss = self.risk_manager.get_max_daily_loss(capital)
-        max_total_loss = self.risk_manager.get_max_total_loss(capital)
-        logger.info(
-            f"FTMO limits for {self.symbol}: Max daily loss={max_daily_loss:.2f}, Max total loss={max_total_loss:.2f}")
-
-        order_blocks = self.detect_order_blocks(df)
-        print(f"DEBUG: Detected {len(order_blocks)} order blocks")
-
-        if not order_blocks:
-            if self.verbose_logging:
-                print(
-                    f"No order blocks detected for {self.symbol}, returning empty signals")
-            logger.info(
-                f"No order blocks detected for {self.symbol}, returning empty signals")
-            return entries, sl_stop, tp_stop
-
-        lstm_pred = 0.0
-        if self.model is not None:
-            try:
-                X_in = self.prepare_lstm_input(df)
-                lstm_pred = self.model.predict(X_in, verbose=0)[0][0]
-                if self.verbose_logging:
-                    print(
-                        f"LSTM prediction: {lstm_pred:.4f}, threshold: {self.lstm_threshold} ({self.symbol})")
-                logger.info(
-                    f"LSTM prediction: {lstm_pred:.4f}, threshold: {self.lstm_threshold} ({self.symbol})")
-            except Exception as e:
-                logger.error(f"LSTM prediction failed for {self.symbol}: {str(e)}")
-                if self.verbose_logging:
-                    print(f"LSTM prediction failed for {self.symbol}: {str(e)}")
-        else:
-            if self.verbose_logging:
-                print(
-                    f"No LSTM model available for {self.symbol}, using default LSTM value of 0")
-            logger.warning(
-                f"No LSTM model available for {self.symbol}, using default LSTM value of 0")
-
-        # Get current price for trading conditions
-        current_price = df['close'].iloc[-1]
-
-        # Prepare returns for risk calculation
-        returns = df['close'].pct_change().dropna()
-        open_positions = {}
-
-        # Track signaling metrics
-        signals_checked = 0
-        recent_ob_count = 0
-        signals_generated = 0
-
-        # VERBETERD: Gebruik alle order blocks vanaf het begin van de dataset
-        time_filter = df.index[0]
-
-        # Loop through detected order blocks
-        for ob in order_blocks:
-            signals_checked += 1
-
-            # Skip very old order blocks
-            if ob.time < time_filter:
-                continue
-
-            recent_ob_count += 1
-
-            # Get past data for Fibonacci levels
-            past_data = df.loc[:ob.time].tail(self.fib_lookback)
-            if past_data.empty:
-                continue
-
-            swing_high = past_data['high'].max()
-            swing_low = past_data['low'].min()
-            fib = self.calculate_fibonacci_levels(swing_high, swing_low)
-
-            if self.verbose_logging and (
-                    signals_checked <= 10 or signals_checked % 50 == 0):
-                print(
-                    f"\nOrder Block #{signals_checked}: {'Bullish' if ob.direction == 1 else 'Bearish'} at {ob.time} ({self.symbol})")
-                print(f"  Price range: {ob.low:.5f}-{ob.high:.5f}")
-                print(
-                    f"  Fibonacci levels: 23.6%={fib['23.6%']:.5f}, 38.2%={fib['38.2%']:.5f}, 50.0%={fib['50.0%']:.5f}, 61.8%={fib['61.8%']:.5f}")
-                print(f"  Current price: {current_price:.5f}")
-
-            # VERBETERD: Meer versoepelde criteria voor prijsafstanden en Fibonacci zones
-            if ob.direction == 1:  # Bullish
-                # Verruimd van 5% naar 12%
-                price_near_ob = abs(current_price - ob.low) / ob.low < 0.15
-                # Bredere Fibonacci zone
-                fib_zone = (fib['61.8%'] * 0.6) <= current_price <= (fib['38.2%'] * 1.4)
-                # LSTM gebruikt als het beschikbaar is
-                lstm_trend_ok = lstm_pred > self.lstm_threshold if self.model is not None else True
-                # Trading condition met verbeterde logica (OF in plaats van EN voor fib_zone en lstm)
-                trading_condition = price_near_ob and (
-                            fib_zone or lstm_trend_ok) and not ob.traded
-
-                if self.verbose_logging and (
-                        signals_checked <= 5 or signals_checked % 50 == 0):
-                    print(
-                        f"  Bullish conditions: price_near_ob={price_near_ob}, fib_zone={fib_zone}, lstm_trend_ok={lstm_trend_ok}")
-
-            elif ob.direction == -1:  # Bearish
-                # Verruimd van 5% naar 12%
-                price_near_ob = abs(current_price - ob.high) / ob.high < 0.12
-                # Bredere Fibonacci zone
-                fib_zone = (fib['38.2%'] * 0.6) <= current_price <= (fib['61.8%'] * 1.4)
-                # LSTM gebruikt als het beschikbaar is
-                lstm_trend_ok = lstm_pred > self.lstm_threshold if self.model is not None else True
-                # Trading condition met verbeterde logica (OF in plaats van EN voor fib_zone en lstm)
-                trading_condition = price_near_ob and (
-                            fib_zone or lstm_trend_ok) and not ob.traded
-
-                if self.verbose_logging and (
-                        signals_checked <= 5 or signals_checked % 50 == 0):
-                    print(
-                        f"  Bearish conditions: price_near_ob={price_near_ob}, fib_zone={fib_zone}, lstm_trend_ok={lstm_trend_ok}")
-
-            # Signal placement (unchanged)
-            if trading_condition:
-                try:
-                    signal_idx = df.index.get_indexer([ob.time], method='pad')[0]
-                    if signal_idx < len(entries) - 1:
-                        entries.iloc[signal_idx + 1] = ob.direction
-                        signals_generated += 1
-                        ob.traded = True
-
-                        if self.verbose_logging:
-                            print(
-                                f"✅ {'Bullish' if ob.direction == 1 else 'Bearish'} signal at {df.index[signal_idx + 1]}, index={signal_idx + 1}")
-                        logger.info(
-                            f"Signal placed at index {signal_idx + 1} from OB at {ob.time}")
-                except Exception as e:
-                    logger.error(f"Error placing signal: {str(e)}")
-
-        # Summary statistics
-        if self.verbose_logging:
-            print(f"\nSignal generation results for {self.symbol}:")
-            print(f"  Order Blocks analyzed: {signals_checked}")
-            print(f"  Recent Order Blocks: {recent_ob_count}")
-            print(f"  Signals generated: {signals_generated}")
-
-        logger.info(
-            f"Signal generation results for {self.symbol}: {signals_generated} signals from {recent_ob_count} recent OBs")
-        self.risk_manager.clear_cache()
-        return entries, sl_stop, tp_stop
-
-    @classmethod
-    def get_default_params(cls, timeframe: str = "H1") -> Dict[str, List[Any]]:
-        """
-        Return default parameters for optimization.
-
-        Args:
-            timeframe (str): Timeframe (e.g., H1).
-
-        Returns:
-            Dict[str, List[Any]]: Dictionary of parameter names and their possible values.
-        """
-        return {'symbol': SYMBOLS, 'window': [30, 50, 60],
-                'lstm_threshold': [0.05, 0.1, 0.15],
-                'sl_fixed_percent': [0.01, 0.015, 0.02],
-                'tp_fixed_percent': [0.02, 0.025, 0.03],
-                'use_trailing_stop': [False, True],
-                'trailing_stop_percent': [0.01, 0.015, 0.02],
-                'risk_per_trade': [0.01, 0.02, 0.03],
-                'confidence_level': [0.90, 0.95, 0.99], 'fib_lookback': [10, 20, 30],
-                'initial_capital': [10000.0, 50000.0, 100000.0]}
-
-    @classmethod
-    def get_parameter_descriptions(cls) -> Dict[str, str]:
-        """
-        Describe parameters for documentation.
-
-        Returns:
-            Dict[str, str]: Dictionary of parameter names and their descriptions.
-        """
-        return {'symbol': 'Trading symbol (e.g., XAUUSD)',
-                'timeframe': 'Timeframe for trading (e.g., H1)',
-                'window': 'Number of periods for LSTM input sequence',
-                'lstm_threshold': 'Threshold for LSTM signals (0 to 1)',
-                'sl_fixed_percent': 'Fixed stop-loss percentage',
-                'tp_fixed_percent': 'Fixed take-profit percentage',
-                'use_trailing_stop': 'Whether to use trailing stop (true/false)',
-                'trailing_stop_percent': 'Trailing stop percentage',
-                'risk_per_trade': 'Risk per trade as percentage of portfolio (0.02 = 2%)',
-                'confidence_level': 'Confidence level for VaR calculation',
-                'model_path': 'Path to pre-trained LSTM model (.h5 file)',
-                'verbose_logging': 'Enable detailed logging for debugging',
-                'fib_lookback': 'Lookback period for Fibonacci swing high/low calculation',
-                'initial_capital': 'Initial account capital for risk management'}
+    if feature_columns is None:
+        feature_columns = ['open', 'high', 'low', 'close']
+
+    required_columns = feature_columns + [
+        target_column] if target_column not in feature_columns else feature_columns
+    if not all(col in df.columns for col in required_columns):
+        raise ValueError(f"DataFrame missing required columns: {required_columns}")
+
+    # Enhanced Feature Engineering with VectorBT
+    df['ma20'] = vbt.MA.run(df['close'], window=20).ma
+    df['ma50'] = vbt.MA.run(df['close'], window=50).ma
+    df['rsi'] = vbt.RSI.run(df['close'], window=14).rsi
+    df['atr'] = vbt.ATR.run(df['high'], df['low'], df['close'], window=14).atr
+    bb = vbt.BBANDS.run(df['close'], window=20)
+    df['bb_upper'] = bb.upper
+    df['bb_lower'] = bb.lower
+    macd = vbt.MACD.run(df['close'], fast_window=12, slow_window=26, signal_window=9)
+    df['macd'] = macd.macd
+    df['macd_signal'] = macd.signal
+
+    # Add features to feature_columns
+    enhanced_features = feature_columns.copy()
+    for indicator in ['ma20', 'ma50', 'rsi', 'atr', 'bb_upper', 'bb_lower', 'macd',
+                      'macd_signal']:
+        if indicator not in enhanced_features:
+            enhanced_features.append(indicator)
+
+    # Fill missing values
+    df = df.fillna(method='bfill')
+
+    # Normalize features
+    scaler = MinMaxScaler()
+    scaled_data = scaler.fit_transform(df[enhanced_features])
+
+    # Create shifted target
+    target_idx = enhanced_features.index(target_column)
+    shifted_target = df[target_column].shift(-target_shift).dropna().values
+
+    # Adjust data length
+    data_length = len(shifted_target)
+    scaled_data = scaled_data[:data_length]
+
+    X, y = [], []
+    for i in range(len(scaled_data) - seq_len):
+        X.append(scaled_data[i:i + seq_len])
+        y.append(shifted_target[i + seq_len])
+
+    return np.array(X), np.array(y), scaler
+
+
+def build_lstm_model(hp, seq_len: int, n_features: int) -> Sequential:
+    """
+    Build and compile an LSTM model with attention mechanism and hyperparameter tuning.
+
+    Args:
+        hp (HyperParameters): Keras Tuner hyperparameters.
+        seq_len (int): Length of the sequence.
+        n_features (int): Number of features.
+
+    Returns:
+        Sequential: Compiled LSTM model.
+    """
+    model = Sequential()
+    model.add(Input(shape=(seq_len, n_features)))
+
+    # LSTM layers with tunable units
+    lstm_units = hp.Int('lstm_units', min_value=32, max_value=128, step=32)
+    model.add(LSTM(units=lstm_units, return_sequences=True))
+    model.add(Dropout(hp.Float('dropout_1', min_value=0.1, max_value=0.5, step=0.1)))
+    model.add(LSTM(units=lstm_units // 2, return_sequences=True))
+    model.add(Dropout(hp.Float('dropout_2', min_value=0.1, max_value=0.5, step=0.1)))
+
+    # Attention mechanism
+    model.add(AttentionLayer())
+
+    # Dense layers
+    model.add(Dense(units=hp.Int('dense_units', min_value=16, max_value=64, step=16),
+                    activation='relu'))
+    model.add(Dense(1))
+
+    # Compile with tunable learning rate
+    learning_rate = hp.Float('learning_rate', min_value=1e-4, max_value=1e-2,
+                             sampling='LOG')
+    model.compile(optimizer=Adam(learning_rate=learning_rate), loss='mse')
+    return model
+
+
+def evaluate_model(model, X_test: np.ndarray, y_test: np.ndarray, scaler,
+                   feature_columns: list, results_dir: str, symbol: str) -> Dict[
+    str, float]:
+    """
+    Evaluate model and create performance visualizations.
+
+    Returns:
+        Dict with evaluation metrics.
+    """
+    predictions = model.predict(X_test, verbose=0)
+
+    mse = np.mean((predictions - y_test) ** 2)
+    rmse = np.sqrt(mse)
+    mae = np.mean(np.abs(predictions - y_test))
+    corr = np.corrcoef(predictions.flatten(), y_test)[0, 1]
+
+    # Plot actual vs predicted
+    plt.figure(figsize=(10, 6))
+    plt.plot(y_test, label='Actual')
+    plt.plot(predictions, label='Predicted')
+    plt.title(f'LSTM Performance for {symbol}')
+    plt.legend()
+    plt.savefig(os.path.join(results_dir, f'lstm_performance_{symbol}.png'))
+    plt.close()
+
+    # Directional accuracy
+    direction_actual = np.diff(y_test)
+    direction_pred = np.diff(predictions.flatten())
+    directional_accuracy = np.mean((direction_actual > 0) == (direction_pred > 0))
+
+    return {'mse': mse, 'rmse': rmse, 'mae': mae, 'correlation': corr,
+            'directional_accuracy': directional_accuracy}
+
+
+def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
+                         output_dir: str, epochs: int = 50, batch_size: int = 32,
+                         verbose: int = 1) -> Dict[str, Any]:
+    """
+    Train an LSTM model with hyperparameter tuning and attention mechanism.
+
+    Args:
+        symbol (str): Trading symbol (e.g., 'XAUUSD').
+        timeframe (str): Timeframe (e.g., 'H1').
+        days (int): Number of days of historical data.
+        seq_len (int): Sequence length for LSTM.
+        output_dir (str): Directory to save the trained model.
+        epochs (int): Number of training epochs.
+        batch_size (int): Batch size for training.
+        verbose (int): Verbosity level for training.
+
+    Returns:
+        Dict with training results.
+    """
+    logger.info(f"Starting LSTM training for {symbol} on {timeframe}")
+
+    # Create output directory structure
+    output_path = Path(output_dir)
+    output_path.mkdir(exist_ok=True, parents=True)
+
+    model_dir = output_path / "trainedh5"
+    model_dir.mkdir(exist_ok=True)
+
+    results_dir = output_path / "results"
+    results_dir.mkdir(exist_ok=True)
+
+    # Fetch historical data
+    df = BaseStrategy.fetch_historical_data(symbol=symbol, timeframe=timeframe,
+                                            days=days)
+    if df is None or df.empty:
+        logger.error(f"Failed to fetch historical data for {symbol} on {timeframe}")
+        return {"success": False, "error": "Failed to fetch data"}
+
+    logger.info(f"Fetched {len(df)} candles for {symbol} on {timeframe}")
+
+    # Prepare data
+    feature_columns = ['open', 'high', 'low', 'close', 'tick_volume']
+    if 'spread' in df.columns:
+        feature_columns.append('spread')
+
+    X, y, scaler = prepare_data(df, seq_len, feature_columns=feature_columns)
+    if len(X) == 0:
+        logger.error(f"Insufficient data to train LSTM for {symbol} on {timeframe}")
+        return {"success": False, "error": "Insufficient data"}
+
+    # Split into train and test
+    train_size = int(len(X) * 0.8)
+    X_train, X_test = X[:train_size], X[train_size:]
+    y_train, y_test = y[:train_size], y[train_size:]
+
+    # Create TensorFlow dataset for efficient training
+    train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train)).batch(
+        batch_size).prefetch(tf.data.AUTOTUNE)
+    test_dataset = tf.data.Dataset.from_tensor_slices((X_test, y_test)).batch(
+        batch_size).prefetch(tf.data.AUTOTUNE)
+
+    # Hyperparameter tuning with Keras Tuner
+    tuner = kt.Hyperband(lambda hp: build_lstm_model(hp, seq_len, X.shape[2]),
+        objective='val_loss', max_epochs=epochs, directory=str(results_dir / 'tuner'),
+        project_name=f'lstm_{symbol}_{timeframe}')
+
+    # Callbacks
+    callbacks = [
+        EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
+        ModelCheckpoint(
+            filepath=str(model_dir / f"lstm_{symbol}_{timeframe}_checkpoint.h5"),
+            save_best_only=True, monitor='val_loss')]
+
+    # Search for best hyperparameters
+    tuner.search(train_dataset, validation_data=test_dataset, callbacks=callbacks,
+                 verbose=verbose)
+
+    # Get the best model
+    best_model = tuner.get_best_models(num_models=1)[0]
+    best_hyperparameters = tuner.get_best_hyperparameters(num_trials=1)[0]
+
+    # Evaluate model
+    metrics = evaluate_model(best_model, X_test, y_test, scaler, feature_columns,
+                             str(results_dir), symbol)
+    logger.info(f"Model evaluation metrics: {metrics}")
+
+    # Save final model
+    model_path = model_dir / f"lstm_{symbol}_{timeframe}.h5"
+    best_model.save(str(model_path))
+    logger.info(f"LSTM model saved to {model_path}")
+
+    # Save results summary
+    with open(str(results_dir / f"results_{symbol}_{timeframe}.txt"), 'w') as f:
+        f.write(f"LSTM Training Results for {symbol} on {timeframe}\n")
+        f.write(f"Sequence Length: {seq_len}\n")
+        f.write(f"Best Hyperparameters: {best_hyperparameters.values}\n")
+        f.write(f"Data Points: {len(df)}\n")
+        f.write(f"Features: {feature_columns}\n\n")
+        f.write("Evaluation Metrics:\n")
+        for k, v in metrics.items():
+            f.write(f"  {k}: {v:.4f}\n")
+
+    return {"success": True, "model_path": str(model_path), "metrics": metrics,
+            "data_points": len(df), "sequence_length": seq_len}
+
+
+def main() -> None:
+    """Main function to train LSTM model from command line arguments."""
+    parser = argparse.ArgumentParser(
+        description="Train LSTM model for trading strategy")
+    parser.add_argument("--symbol", type=str, required=True,
+                        help="Trading symbol (e.g., XAUUSD)")
+    parser.add_argument("--timeframe", type=str, default="H1",
+                        help="Timeframe (e.g., H1)")
+    parser.add_argument("--days", type=int, default=500,
+                        help="Number of days of historical data")
+    parser.add_argument("--seq_len", type=int, default=50,
+                        help="Sequence length for LSTM")
+    parser.add_argument("--output", type=str, default="trainedh5",
+                        help="Output directory for the model")
+    parser.add_argument("--epochs", type=int, default=50,
+                        help="Number of training epochs")
+    parser.add_argument("--batch_size", type=int, default=32,
+                        help="Batch size for training")
+    parser.add_argument("--verbose", type=int, default=1,
+                        help="Verbosity level (0=silent, 1=progress, 2=detailed)")
+    args = parser.parse_args()
+
+    train_and_save_model(symbol=args.symbol, timeframe=args.timeframe, days=args.days,
+        seq_len=args.seq_len, output_dir=args.output, epochs=args.epochs,
+        batch_size=args.batch_size, verbose=args.verbose)
+
+
+if __name__ == "__main__":
+    main()
