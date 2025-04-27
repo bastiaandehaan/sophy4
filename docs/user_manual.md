@@ -14,6 +14,7 @@
     - [FTMO Compliance Module](#ftmo-compliance-module)
     - [Strategies Module](#strategies-module)
     - [Utilities Module](#utilities-module)
+    - [Optimization Module](#optimization-module)
 6. [Developing Strategies](#developing-strategies)
 7. [Commands and Parameters](#commands-and-parameters)
 8. [Performance Monitoring and Reporting](#performance-monitoring-and-reporting)
@@ -30,6 +31,7 @@ The system offers:
 - **Risk management tools**: Calculate position sizes using Value at Risk (VaR) methodology.
 - **Performance monitoring**: Track and visualize key performance metrics.
 - **FTMO compliance checks**: Ensure strategies meet FTMO funding requirements.
+- **Strategy optimization**: Optimize strategy parameters for maximum performance.
 
 ## System Architecture
 
@@ -41,6 +43,8 @@ The Sophy4 framework is composed of multiple modular components:
 - `ftmo_compliance/`: Checks FTMO rules.
 - `strategies/`: Defines trading strategies (e.g., BollongStrategy).
 - `utils/`: Utility functions for data and indicators.
+- `optimization/`: Strategy parameter optimization capabilities.
+- `models/`: Machine learning model definitions and storage.
 
 ## Installation
 
@@ -61,6 +65,8 @@ Edit `config.py` to set:
 - `FEES`: Transaction fees (default: 0.02%)
 - `PIP_VALUE`: Value per pip (default: 10.0)
 - Logging paths and FTMO limits
+
+Additionally, `timeframe_config.json` contains timeframe-specific settings that strategies can use for different timeframe configurations.
 
 ## Modules
 
@@ -83,10 +89,16 @@ Located in `monitor/monitor.py`, tracks performance metrics during backtesting o
 Located in `ftmo_compliance/ftmo_check.py`, ensures strategies meet FTMO rules (e.g., max 10% drawdown).
 
 ### Strategies Module
-Located in `strategies/`, defines trading strategies. Example: `bollong.py` implements a Bollinger Bands breakout strategy with VaR-based sizing.
+Located in `strategies/`, defines trading strategies:
+- `bollong.py`: Implements a Bollinger Bands breakout strategy with VaR-based sizing
+- `bollong_vectorized.py`: Vectorized implementation of the Bollinger strategy
+- `order_block_lstm_strategy.py`: Advanced strategy combining order blocks with LSTM predictions
 
 ### Utilities Module
 Located in `utils/`, provides helper functions (e.g., `calculate_bollinger_bands`).
+
+### Optimization Module
+Located in `optimization/`, contains tools for parameter optimization to find the best-performing strategy settings.
 
 ## Developing Strategies
 
@@ -94,10 +106,54 @@ Located in `utils/`, provides helper functions (e.g., `calculate_bollinger_bands
 2. Inherit from `BaseStrategy`:
    ```python
    from strategies.base_strategy import BaseStrategy
-   from typing import Tuple
+   from typing import Tuple, Dict, List, Any, Optional
    import pandas as pd
+   import json
+   from utils.indicators import calculate_bollinger_bands, calculate_atr, calculate_adx
+   from risk.risk_management import RiskManager
+   import logging
 
+   logger = logging.getLogger(__name__)
+
+   # Use the register_strategy decorator to make it available to the framework
+   from strategies import register_strategy
+
+   @register_strategy
    class MyStrategy(BaseStrategy):
-       def generate_signals(self, df: pd.DataFrame) -> Tuple[pd.Series, pd.Series, pd.Series]:
+       def __init__(self, symbol: str = "EURUSD", window: int = 50, # other parameters):
+           super().__init__()
+           self.symbol = symbol
+           self.window = window
+           # Initialize other parameters
+       
+       def validate_parameters(self) -> bool:
+           # Implement parameter validation
+           return True
+           
+       def generate_signals(self, df: pd.DataFrame, current_capital: Optional[float] = None) -> Tuple[pd.Series, pd.Series, pd.Series]:
            # Implement signal logic
-           pass
+           # Return (entries, sl_stop, tp_stop)
+           
+       @classmethod
+       def get_default_params(cls, timeframe: str = "H1") -> Dict[str, List[Any]]:
+           # Return default parameters for optimization
+           
+       @classmethod
+       def get_parameter_descriptions(cls) -> Dict[str, str]:
+           # Return parameter descriptions
+   ```
+
+3. Implement the required methods:
+   - `generate_signals()`: Core strategy logic that returns entry signals and stop levels
+   - `validate_parameters()`: Validate strategy parameters
+   - `get_default_params()`: Default parameters for optimization (optional)
+   - `get_parameter_descriptions()`: Parameter descriptions for documentation (optional)
+
+4. Use the strategy:
+   ```
+   python main.py --mode backtest --strategy MyStrategy --symbol EURUSD
+   ```
+
+## Commands and Parameters
+
+### Main Script Options
