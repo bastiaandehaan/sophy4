@@ -244,6 +244,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--confidence_level", type=float, default=0.95, help="VaR confidence level")
     parser.add_argument("--model_path", type=str, help="Pad naar getraind LSTM model (.h5 bestand)")
     parser.add_argument("--time_filter_pct", type=float, help="Percentage van tijd voor trading filter")
+    parser.add_argument("--verbose_logging", action="store_true",
+                            help="Toon uitgebreide logging informatie")
     return parser.parse_args()
 
 
