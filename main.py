@@ -7,7 +7,7 @@ import argparse
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List
 
 # Wijzig de import om alleen de functie te importeren die wel bestaat
 from backtest.backtest import run_extended_backtest
@@ -16,6 +16,7 @@ from ftmo_compliance.ftmo_check import check_ftmo_compliance
 from monitor.monitor import monitor_performance
 from optimization.optimize import quick_optimize
 from strategies import STRATEGIES
+
 
 # Implementatie van Monte Carlo simulatie functie
 def run_monte_carlo_simulation(pf, n_simulations=1000):

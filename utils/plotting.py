@@ -1,10 +1,8 @@
 # utils/plotting.py
-import os
 from pathlib import Path
 from typing import Optional, Union
 
 import matplotlib.pyplot as plt
-import pandas as pd
 import vectorbt as vbt
 
 

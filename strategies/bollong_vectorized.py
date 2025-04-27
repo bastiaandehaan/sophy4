@@ -1,12 +1,14 @@
 # strategies/bollong_vectorized.py
-from typing import Dict, List, Tuple, Any, Optional, Union
-import pandas as pd
-import numpy as np
 import json
 import logging
+from typing import Dict, List, Tuple, Any, Optional
+
+import numpy as np
+import pandas as pd
+
+from risk.risk_management import RiskManager
 from strategies import register_strategy
 from strategies.base_strategy import BaseStrategy
-from risk.risk_management import RiskManager
 
 # Logger configureren
 logger = logging.getLogger(__name__)

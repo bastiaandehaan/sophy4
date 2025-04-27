@@ -1,11 +1,11 @@
 import argparse
+from pathlib import Path
+from typing import Tuple, Dict, Any
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import os
-from pathlib import Path
 from sklearn.preprocessing import MinMaxScaler
-from typing import Tuple, Dict, Any
-import matplotlib.pyplot as plt
 
 try:
     from tensorflow.keras.models import Sequential, load_model
@@ -171,7 +171,7 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
         timeframe (str): Timeframe (e.g., 'H1').
         days (int): Number of days of historical data.
         seq_len (int): Sequence length for LSTM.
-        output_dir (str): Directory to save the trained model.
+        output_dir (str): Directory to save the trainedh5 model.
         lstm_units (int): Number of LSTM units per layer.
         epochs (int): Number of training epochs.
         batch_size (int): Batch size for training.
@@ -186,7 +186,7 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
     output_path = Path(output_dir)
     output_path.mkdir(exist_ok=True, parents=True)
 
-    model_dir = output_path / "models"
+    model_dir = output_path / "trainedh5"
     model_dir.mkdir(exist_ok=True)
 
     results_dir = output_path / "results"
@@ -283,7 +283,7 @@ def main() -> None:
                         help="Number of days of historical data")
     parser.add_argument("--seq_len", type=int, default=50,
                         help="Sequence length for LSTM")
-    parser.add_argument("--output", type=str, default="models",
+    parser.add_argument("--output", type=str, default="trainedh5",
                         help="Output directory for the model")
     parser.add_argument("--lstm_units", type=int, default=50,
                         help="Number of LSTM units per layer")

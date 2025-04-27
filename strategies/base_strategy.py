@@ -1,10 +1,10 @@
 # strategies/base_strategy.py
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Tuple, Optional, Union
 from datetime import datetime
+from typing import Dict, List, Any, Tuple, Optional, Union
 
-import pandas as pd
 import MetaTrader5 as mt5
+import pandas as pd
 
 
 class BaseStrategy(ABC):

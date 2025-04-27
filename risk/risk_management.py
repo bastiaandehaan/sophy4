@@ -1,11 +1,12 @@
 import logging
-from typing import Dict, Optional, Tuple, Union, Any
+from typing import Dict, Optional, Tuple, Any
+
+import MetaTrader5 as mt5
 import numpy as np
 import pandas as pd
-import MetaTrader5 as mt5
-from scipy.stats import norm
 # Import VectorBT
 import vectorbt as vbt
+from scipy.stats import norm
 
 # Configureer een lokale logger
 logging.basicConfig(level=logging.INFO,

@@ -1,10 +1,8 @@
-from typing import Dict, List, Tuple, Any, Optional, Union
-import pandas as pd
 import json
 import logging
-import numpy as np
-from scipy.stats import norm
-import MetaTrader5 as mt5
+from typing import Dict, List, Tuple, Any, Optional
+
+import pandas as pd
 
 from strategies import register_strategy
 from strategies.base_strategy import BaseStrategy

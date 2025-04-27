@@ -1,19 +1,19 @@
 # backtest/backtest.py
 import json
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 import vectorbt as vbt
-from utils.plotting import create_visualizations
 
 from backtest.data_loader import fetch_historical_data
 from config import INITIAL_CAPITAL, FEES, OUTPUT_DIR, logger
 from ftmo_compliance.ftmo_check import check_ftmo_compliance
 from risk.risk_management import RiskManager
 from strategies import get_strategy
+from utils.plotting import create_visualizations
 
 
 def _calculate_stop(portfolio_kwargs: Dict[str, Any], parameters: Dict[str, Any]) -> None:

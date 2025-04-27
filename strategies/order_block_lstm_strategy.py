@@ -1,8 +1,8 @@
+import os
 from typing import Tuple, List, Dict, Any, Optional
+
 import numpy as np
 import pandas as pd
-import os
-from pathlib import Path
 from sklearn.preprocessing import MinMaxScaler
 
 try:
@@ -89,8 +89,10 @@ class OrderBlockLSTMStrategy(BaseStrategy):
 
         # Initialize RiskManager with FTMO-compliant settings
         self.risk_manager = RiskManager(confidence_level=self.confidence_level,
-                                        max_risk=self.risk_per_trade, max_daily_loss_percent=0.05,
-                                        max_total_loss_percent=0.10, correlated_symbols=CORRELATED_SYMBOLS)
+                                        max_risk=self.risk_per_trade,
+                                        max_daily_loss_percent=0.05,
+                                        max_total_loss_percent=0.10,
+                                        correlated_symbols=CORRELATED_SYMBOLS)
 
         print(f"\n==== OrderBlockLSTM Strategy v2.1 ({symbol}) ====")
         print("Enhanced MQL5-based order block detection with relaxed trading criteria")
@@ -120,7 +122,8 @@ class OrderBlockLSTMStrategy(BaseStrategy):
                 print(f"⚠️ Failed to load LSTM model: {str(e)}")
                 logger.error(f"Failed to load LSTM model: {str(e)}")
         else:
-            logger.warning(f"No LSTM model provided for {symbol}, using fallback logic (LSTM pred = 0)")
+            logger.warning(
+                f"No LSTM model provided for {symbol}, using fallback logic (LSTM pred = 0)")
             if self.verbose_logging:
                 print(f"No LSTM model provided for {symbol}, using fallback logic")
 
@@ -147,7 +150,9 @@ class OrderBlockLSTMStrategy(BaseStrategy):
                 mt5.shutdown()
                 return self._get_fallback_symbol_info(symbol)
 
-            tick_value = getattr(symbol_info, 'trade_tick_value', 0.0001 if symbol.startswith(('EUR', 'GBP', 'AUD')) else 10.0)
+            tick_value = getattr(symbol_info, 'trade_tick_value',
+                                 0.0001 if symbol.startswith(
+                                     ('EUR', 'GBP', 'AUD')) else 10.0)
             point = symbol_info.point
             trade_tick_size = getattr(symbol_info, 'trade_tick_size', point)
 
@@ -160,14 +165,10 @@ class OrderBlockLSTMStrategy(BaseStrategy):
 
             logger.info(f"Symbol info attributes for {symbol}: {dir(symbol_info)}")
             mt5.shutdown()
-            return {
-                "pip_value": pip_value,
-                "spread": symbol_info.spread * point,
+            return {"pip_value": pip_value, "spread": symbol_info.spread * point,
                 "tick_value": tick_value,
-                "contract_size": symbol_info.trade_contract_size,
-                "point": point,
-                "trade_tick_size": trade_tick_size
-            }
+                "contract_size": symbol_info.trade_contract_size, "point": point,
+                "trade_tick_size": trade_tick_size}
         except Exception as e:
             logger.error(f"Error retrieving symbol info for {symbol}: {str(e)}")
             mt5.shutdown()
@@ -177,7 +178,8 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         """Fallback values based on symbol type."""
         if symbol.startswith(('EUR', 'GBP', 'USD', 'AUD')):
             return {"pip_value": 0.0001, "spread": 0.00002, "tick_value": 0.0001,
-                    "contract_size": 100000, "point": 0.00001, "trade_tick_size": 0.00001}
+                    "contract_size": 100000, "point": 0.00001,
+                    "trade_tick_size": 0.00001}
         else:
             return {"pip_value": 1.0, "spread": 0.5, "tick_value": 1.0,
                     "contract_size": 1, "point": 0.1, "trade_tick_size": 0.1}
@@ -205,39 +207,44 @@ class OrderBlockLSTMStrategy(BaseStrategy):
 
             c1, c2, c3, c4 = df.iloc[i], df.iloc[i + 1], df.iloc[i + 2], df.iloc[i + 3]
 
-            if (c1['close'] > c1['open'] and
-                    c2['close'] > c2['open'] and
-                    c3['close'] < c3['open'] and
-                    (c3['high'] - c3['low']) > (c2['high'] - c2['low']) * 1.1 and
-                    c3['open'] < c2['close']):
+            if (c1['close'] > c1['open'] and c2['close'] > c2['open'] and c3['close'] <
+                    c3['open'] and (c3['high'] - c3['low']) > (
+                            c2['high'] - c2['low']) * 1.1 and c3['open'] < c2['close']):
                 obs.append(OrderBlock(1, c3.name, c3['high'], c3['low']))
                 bullish_count += 1
                 if self.verbose_logging and bullish_count % 10 == 1:
-                    logger.info(f"Bullish OB at {c3.name}: {c3['low']:.5f}-{c3['high']:.5f} ({self.symbol})")
-                    print(f"Bullish OB at {c3.name}: {c3['low']:.5f}-{c3['high']:.5f} ({self.symbol})")
+                    logger.info(
+                        f"Bullish OB at {c3.name}: {c3['low']:.5f}-{c3['high']:.5f} ({self.symbol})")
+                    print(
+                        f"Bullish OB at {c3.name}: {c3['low']:.5f}-{c3['high']:.5f} ({self.symbol})")
 
-            elif (c1['close'] < c1['open'] and
-                  c2['close'] < c2['open'] and
-                  c3['close'] > c3['open'] and
-                  (c3['high'] - c3['low']) > (c2['high'] - c2['low']) * 1.1 and
-                  c3['open'] > c2['close']):
+            elif (c1['close'] < c1['open'] and c2['close'] < c2['open'] and c3[
+                'close'] > c3['open'] and (c3['high'] - c3['low']) > (
+                          c2['high'] - c2['low']) * 1.1 and c3['open'] > c2['close']):
                 obs.append(OrderBlock(-1, c3.name, c3['high'], c3['low']))
                 bearish_count += 1
                 if self.verbose_logging and bearish_count % 10 == 1:
-                    logger.info(f"Bearish OB at {c3.name}: {c3['low']:.5f}-{c3['high']:.5f} ({self.symbol})")
-                    print(f"Bearish OB at {c3.name}: {c3['low']:.5f}-{c3['high']:.5f} ({self.symbol})")
+                    logger.info(
+                        f"Bearish OB at {c3.name}: {c3['low']:.5f}-{c3['high']:.5f} ({self.symbol})")
+                    print(
+                        f"Bearish OB at {c3.name}: {c3['low']:.5f}-{c3['high']:.5f} ({self.symbol})")
 
-        logger.info(f"Order Blocks detected: {bullish_count} bullish, {bearish_count} bearish ({self.symbol})")
+        logger.info(
+            f"Order Blocks detected: {bullish_count} bullish, {bearish_count} bearish ({self.symbol})")
         if self.verbose_logging:
-            print(f"Order Blocks detected: {bullish_count} bullish, {bearish_count} bearish, total {len(obs)} ({self.symbol})")
+            print(
+                f"Order Blocks detected: {bullish_count} bullish, {bearish_count} bearish, total {len(obs)} ({self.symbol})")
 
         if not obs and self.verbose_logging:
-            logger.warning(f"No order blocks detected for {self.symbol}. Check data or pattern logic.")
-            print(f"No order blocks detected for {self.symbol}. Verify data or pattern logic.")
+            logger.warning(
+                f"No order blocks detected for {self.symbol}. Check data or pattern logic.")
+            print(
+                f"No order blocks detected for {self.symbol}. Verify data or pattern logic.")
 
         return obs
 
-    def calculate_fibonacci_levels(self, swing_high: float, swing_low: float) -> Dict[str, float]:
+    def calculate_fibonacci_levels(self, swing_high: float, swing_low: float) -> Dict[
+        str, float]:
         """
         Calculate Fibonacci retracement levels.
 
@@ -271,7 +278,8 @@ class OrderBlockLSTMStrategy(BaseStrategy):
             np.ndarray: Normalized input array of shape (1, window, n_features).
         """
         if len(df) < self.window:
-            logger.warning(f"Insufficient data for LSTM: need {self.window}, got {len(df)} ({self.symbol})")
+            logger.warning(
+                f"Insufficient data for LSTM: need {self.window}, got {len(df)} ({self.symbol})")
             return np.zeros((1, self.window, 9))
 
         df = df.copy()
@@ -279,11 +287,13 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         df['ma50'] = df['close'].rolling(window=50).mean()
         df['rsi'] = self.calculate_rsi(df['close'], 14)
 
-        feature_columns = ['open', 'high', 'low', 'close', 'tick_volume', 'ma20', 'ma50', 'rsi']
+        feature_columns = ['open', 'high', 'low', 'close', 'tick_volume', 'ma20',
+                           'ma50', 'rsi']
         if 'spread' in df.columns:
             feature_columns.append('spread')
 
-        recent_data = df.iloc[-self.window:][feature_columns].fillna(method='bfill').values
+        recent_data = df.iloc[-self.window:][feature_columns].fillna(
+            method='bfill').values
         normalized_data = self.scaler.fit_transform(recent_data)
         logger.info(f"LSTM input shape: {np.array([normalized_data]).shape}")
         return np.array([normalized_data.reshape(self.window, len(feature_columns))])
@@ -301,11 +311,13 @@ class OrderBlockLSTMStrategy(BaseStrategy):
             Tuple[pd.Series, pd.Series, pd.Series]: (entries, sl_stop, tp_stop).
             entries: 1 for buy, -1 for sell, 0 for hold.
         """
-        print(f"DEBUG: Analysing {len(df)} candles for OrderBlockLSTMStrategy with {self.symbol}")
+        print(
+            f"DEBUG: Analysing {len(df)} candles for OrderBlockLSTMStrategy with {self.symbol}")
 
         required_columns = ['open', 'high', 'low', 'close']
         if not all(col in df.columns for col in required_columns):
-            raise ValueError(f"DataFrame missing required columns: {required_columns} for {self.symbol}")
+            raise ValueError(
+                f"DataFrame missing required columns: {required_columns} for {self.symbol}")
 
         entries = pd.Series(0, index=df.index, dtype=int)
         sl_stop = pd.Series(self.sl_fixed_percent, index=df.index)
@@ -319,20 +331,24 @@ class OrderBlockLSTMStrategy(BaseStrategy):
 
         max_value = capital
         if self.risk_manager.monitor_drawdown(capital, max_value):
-            logger.warning(f"Drawdown limit exceeded for {self.symbol}, no new signals generated")
+            logger.warning(
+                f"Drawdown limit exceeded for {self.symbol}, no new signals generated")
             return entries, sl_stop, tp_stop
 
         max_daily_loss = self.risk_manager.get_max_daily_loss(capital)
         max_total_loss = self.risk_manager.get_max_total_loss(capital)
-        logger.info(f"FTMO limits for {self.symbol}: Max daily loss={max_daily_loss:.2f}, Max total loss={max_total_loss:.2f}")
+        logger.info(
+            f"FTMO limits for {self.symbol}: Max daily loss={max_daily_loss:.2f}, Max total loss={max_total_loss:.2f}")
 
         order_blocks = self.detect_order_blocks(df)
         print(f"DEBUG: Detected {len(order_blocks)} order blocks")
 
         if not order_blocks:
             if self.verbose_logging:
-                print(f"No order blocks detected for {self.symbol}, returning empty signals")
-            logger.info(f"No order blocks detected for {self.symbol}, returning empty signals")
+                print(
+                    f"No order blocks detected for {self.symbol}, returning empty signals")
+            logger.info(
+                f"No order blocks detected for {self.symbol}, returning empty signals")
             return entries, sl_stop, tp_stop
 
         lstm_pred = 0.0
@@ -341,43 +357,47 @@ class OrderBlockLSTMStrategy(BaseStrategy):
                 X_in = self.prepare_lstm_input(df)
                 lstm_pred = self.model.predict(X_in, verbose=0)[0][0]
                 if self.verbose_logging:
-                    print(f"LSTM prediction: {lstm_pred:.4f}, threshold: {self.lstm_threshold} ({self.symbol})")
-                logger.info(f"LSTM prediction: {lstm_pred:.4f}, threshold: {self.lstm_threshold} ({self.symbol})")
+                    print(
+                        f"LSTM prediction: {lstm_pred:.4f}, threshold: {self.lstm_threshold} ({self.symbol})")
+                logger.info(
+                    f"LSTM prediction: {lstm_pred:.4f}, threshold: {self.lstm_threshold} ({self.symbol})")
             except Exception as e:
                 logger.error(f"LSTM prediction failed for {self.symbol}: {str(e)}")
                 if self.verbose_logging:
                     print(f"LSTM prediction failed for {self.symbol}: {str(e)}")
         else:
             if self.verbose_logging:
-                print(f"No LSTM model available for {self.symbol}, using default LSTM value of 0")
-            logger.warning(f"No LSTM model available for {self.symbol}, using default LSTM value of 0")
+                print(
+                    f"No LSTM model available for {self.symbol}, using default LSTM value of 0")
+            logger.warning(
+                f"No LSTM model available for {self.symbol}, using default LSTM value of 0")
 
-        try:
-            time_threshold = df.index[-int(90 * 24)]
-        except IndexError:
-            time_threshold = df.index[0]
-
+        # Get current price for trading conditions
         current_price = df['close'].iloc[-1]
-        if self.verbose_logging:
-            print(f"Current price: {current_price:.5f}, time filter: OBs after {time_threshold} ({self.symbol})")
-            print(f"LSTM prediction: {lstm_pred:.4f}")
-        logger.info(f"Current price: {current_price:.5f}, time filter: OBs after {time_threshold} ({self.symbol})")
 
+        # Prepare returns for risk calculation
         returns = df['close'].pct_change().dropna()
         open_positions = {}
 
+        # Track signaling metrics
         signals_checked = 0
         recent_ob_count = 0
         signals_generated = 0
 
+        # Set a reasonable time filter (we want to keep most OBs)
+        time_filter = df.index[0]  # Use all blocks since start of the dataset
+
+        # Loop through detected order blocks
         for ob in order_blocks:
             signals_checked += 1
 
-            if ob.time < time_threshold and not self.verbose_logging:
+            # Skip very old order blocks
+            if ob.time < time_filter:
                 continue
 
             recent_ob_count += 1
 
+            # Get past data for Fibonacci levels
             past_data = df.loc[:ob.time].tail(self.fib_lookback)
             if past_data.empty:
                 continue
@@ -386,56 +406,71 @@ class OrderBlockLSTMStrategy(BaseStrategy):
             swing_low = past_data['low'].min()
             fib = self.calculate_fibonacci_levels(swing_high, swing_low)
 
-            if self.verbose_logging and (signals_checked <= 10 or signals_checked % 50 == 0):
-                print(f"\nOrder Block #{signals_checked}: {'Bullish' if ob.direction == 1 else 'Bearish'} at {ob.time} ({self.symbol})")
+            if self.verbose_logging and (
+                    signals_checked <= 10 or signals_checked % 50 == 0):
+                print(
+                    f"\nOrder Block #{signals_checked}: {'Bullish' if ob.direction == 1 else 'Bearish'} at {ob.time} ({self.symbol})")
                 print(f"  Price range: {ob.low:.5f}-{ob.high:.5f}")
-                print(f"  Fibonacci levels: 23.6%={fib['23.6%']:.5f}, 38.2%={fib['38.2%']:.5f}, 50.0%={fib['50.0%']:.5f}, 61.8%={fib['61.8%']:.5f}")
+                print(
+                    f"  Fibonacci levels: 23.6%={fib['23.6%']:.5f}, 38.2%={fib['38.2%']:.5f}, 50.0%={fib['50.0%']:.5f}, 61.8%={fib['61.8%']:.5f}")
                 print(f"  Current price: {current_price:.5f}")
 
-            trading_condition = False
+            # Determine trading condition based on order block direction
+            if ob.direction == 1:  # Bullish
+                price_near_ob = abs(current_price - ob.low) / ob.low < 0.05  # Relaxed
+                fib_zone = (fib['61.8%'] * 0.8) <= current_price <= (
+                            fib['38.2%'] * 1.2)  # Wider
+                lstm_trend_ok = True  # Always allow LSTM for now
+                trading_condition = price_near_ob and (
+                            fib_zone or lstm_trend_ok) and not ob.traded
 
-            if ob.direction == 1:
-                price_near_ob = abs(current_price - ob.low) / ob.low < 0.02
-                fib_zone = (fib['61.8%'] * 0.9) <= current_price <= (fib['38.2%'] * 1.1)
-                lstm_trend_ok = lstm_pred > -0.05
-                trading_condition = price_near_ob and (fib_zone or lstm_trend_ok) and not ob.traded
+                if self.verbose_logging and (
+                        signals_checked <= 5 or signals_checked % 50 == 0):
+                    print(
+                        f"  Bullish conditions: price_near_ob={price_near_ob}, fib_zone={fib_zone}, lstm_trend_ok={lstm_trend_ok}")
 
-                if self.verbose_logging and (signals_checked <= 5 or signals_checked % 50 == 0):
-                    print(f"  Bullish trading conditions: price_near_ob={price_near_ob}, fib_zone={fib_zone}, lstm_trend_ok={lstm_trend_ok}")
+            elif ob.direction == -1:  # Bearish
+                price_near_ob = abs(current_price - ob.high) / ob.high < 0.05  # Relaxed
+                fib_zone = (fib['38.2%'] * 0.8) <= current_price <= (
+                            fib['61.8%'] * 1.2)  # Wider
+                lstm_trend_ok = True  # Always allow LSTM for now
+                trading_condition = price_near_ob and (
+                            fib_zone or lstm_trend_ok) and not ob.traded
 
-            elif ob.direction == -1:
-                price_near_ob = abs(current_price - ob.high) / ob.high < 0.02
-                fib_zone = (fib['38.2%'] * 0.9) <= current_price <= (fib['61.8%'] * 1.1)
-                lstm_trend_ok = lstm_pred < 0.05
-                trading_condition = price_near_ob and (fib_zone or lstm_trend_ok) and not ob.traded
+                if self.verbose_logging and (
+                        signals_checked <= 5 or signals_checked % 50 == 0):
+                    print(
+                        f"  Bearish conditions: price_near_ob={price_near_ob}, fib_zone={fib_zone}, lstm_trend_ok={lstm_trend_ok}")
 
-                if self.verbose_logging and (signals_checked <= 5 or signals_checked % 50 == 0):
-                    print(f"  Bearish trading conditions: price_near_ob={price_near_ob}, fib_zone={fib_zone}, lstm_trend_ok={lstm_trend_ok}")
-
+            # CRITICAL FIX: Place signal at the correct position if conditions met
             if trading_condition:
                 try:
-                    size = self.risk_manager.calculate_adjusted_position_size(
-                        capital=capital, returns=returns, symbol=self.symbol,
-                        price=current_price, open_positions=open_positions)
+                    # Find the index position that corresponds to or is after the order block time
+                    signal_idx = df.index.get_indexer([ob.time], method='pad')[0]
+
+                    # Place the signal in the bar following the order block
+                    if signal_idx < len(entries) - 1:
+                        entries.iloc[signal_idx + 1] = ob.direction
+                        signals_generated += 1
+                        ob.traded = True
+
+                        if self.verbose_logging:
+                            print(
+                                f"✅ {'Bullish' if ob.direction == 1 else 'Bearish'} signal at {df.index[signal_idx + 1]}, index={signal_idx + 1}")
+                        logger.info(
+                            f"Signal placed at index {signal_idx + 1} from OB at {ob.time}")
                 except Exception as e:
-                    logger.error(f"Error calculating position size: {str(e)}")
-                    size = 1.0
+                    logger.error(f"Error placing signal: {str(e)}")
 
-                if size > 0:
-                    entries.iloc[-1] = ob.direction
-                    signals_generated += 1
-                    ob.traded = True
-                    if self.verbose_logging:
-                        print(f"✅ {'Bullish' if ob.direction == 1 else 'Bearish'} signal generated at {df.index[-1]}, size={size:.2f} ({self.symbol})")
-                    logger.info(f"❗ {'Bullish' if ob.direction == 1 else 'Bearish'} signal generated at {df.index[-1]}, size={size:.2f} ({self.symbol})")
-
+        # Summary statistics
         if self.verbose_logging:
             print(f"\nSignal generation results for {self.symbol}:")
             print(f"  Order Blocks analyzed: {signals_checked}")
             print(f"  Recent Order Blocks: {recent_ob_count}")
             print(f"  Signals generated: {signals_generated}")
-        logger.info(f"Signal generation results for {self.symbol}: {signals_generated} signals from {recent_ob_count} recent OBs")
 
+        logger.info(
+            f"Signal generation results for {self.symbol}: {signals_generated} signals from {recent_ob_count} recent OBs")
         self.risk_manager.clear_cache()
         return entries, sl_stop, tp_stop
 
@@ -453,7 +488,8 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         return {'symbol': SYMBOLS, 'window': [30, 50, 60],
                 'lstm_threshold': [0.05, 0.1, 0.15],
                 'sl_fixed_percent': [0.01, 0.015, 0.02],
-                'tp_fixed_percent': [0.02, 0.025, 0.03], 'use_trailing_stop': [False, True],
+                'tp_fixed_percent': [0.02, 0.025, 0.03],
+                'use_trailing_stop': [False, True],
                 'trailing_stop_percent': [0.01, 0.015, 0.02],
                 'risk_per_trade': [0.01, 0.02, 0.03],
                 'confidence_level': [0.90, 0.95, 0.99], 'fib_lookback': [10, 20, 30],

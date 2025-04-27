@@ -1,5 +1,6 @@
 import logging
 from pathlib import Path
+
 import MetaTrader5 as mt5
 
 # Logging configuration
