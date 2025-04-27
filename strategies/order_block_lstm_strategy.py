@@ -46,7 +46,7 @@ class OrderBlockLSTMStrategy(BaseStrategy):
     """
 
     def __init__(self, symbol: str = "XAUUSD", timeframe: str = "H1", window: int = 50,
-                 lstm_threshold: float = 0.05, sl_fixed_percent: float = 0.01,
+                 lstm_threshold: float = 0.03, sl_fixed_percent: float = 0.01,
                  tp_fixed_percent: float = 0.025, use_trailing_stop: bool = False,
                  trailing_stop_percent: float = 0.015, risk_per_trade: float = 0.02,
                  confidence_level: float = 0.95, model_path: Optional[str] = None,
@@ -440,7 +440,7 @@ class OrderBlockLSTMStrategy(BaseStrategy):
             # VERBETERD: Meer versoepelde criteria voor prijsafstanden en Fibonacci zones
             if ob.direction == 1:  # Bullish
                 # Verruimd van 5% naar 12%
-                price_near_ob = abs(current_price - ob.low) / ob.low < 0.12
+                price_near_ob = abs(current_price - ob.low) / ob.low < 0.15
                 # Bredere Fibonacci zone
                 fib_zone = (fib['61.8%'] * 0.6) <= current_price <= (fib['38.2%'] * 1.4)
                 # LSTM gebruikt als het beschikbaar is
