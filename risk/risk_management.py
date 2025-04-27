@@ -239,6 +239,86 @@ class RiskManager:
     def calculate_adjusted_position_size(self, capital: float, returns: pd.Series,
             symbol: Optional[str] = None, price: Optional[float] = None,
             open_positions: Optional[Dict[str, int]] = None) -> float:
+        def calculate_adjusted_position_size(self, capital: float, returns: pd.Series,
+                                             symbol: Optional[str] = None,
+                                             price: Optional[float] = None,
+                                             open_positions: Optional[
+                                                 Dict[str, int]] = None) -> float:
+            """
+            Verbeterde berekening van positiegrootte met betere foutafhandeling en symboolspecifieke settings.
+
+            Args:
+                capital (float): Huidig portfolio kapitaal.
+                returns (pd.Series): Historische returns van het asset.
+                symbol (str, optional): Symbool om te verhandelen.
+                price (float, optional): Huidige marktprijs.
+                open_positions (Dict[str, int], optional): Dictionary met open posities.
+
+            Returns:
+                float: Positiegrootte.
+            """
+            # Haal symboolinfo op met verbeterde foutafhandeling
+            if symbol:
+                symbol_info = self.get_symbol_info(symbol)
+                if symbol_info:
+                    pip_value = symbol_info["pip_value"]
+                    logger.info(f"Using dynamic pip value for {symbol}: {pip_value}")
+                else:
+                    # Bepaal fallback pip_value op basis van symbooltype
+                    if symbol.startswith(('EUR', 'GBP', 'USD', 'AUD')):
+                        pip_value = 0.0001
+                    elif symbol.startswith(('XAU', 'XAG')):
+                        pip_value = 0.01
+                    else:
+                        pip_value = 1.0
+                    logger.warning(
+                        f"Using fallback pip value for {symbol}: {pip_value}")
+            else:
+                # Default pip_value wanneer geen symbool is opgegeven
+                pip_value = 0.0001
+                logger.info(f"Using default pip value: {pip_value}")
+
+            # Bereken maximaal risicobedrag
+            risk_amount = capital * self.max_risk
+
+            # Bereken VaR met verbeterde foutafhandeling
+            try:
+                var = self.calculate_var(returns, capital, symbol, open_positions)
+                # Beperk risico op basis van VaR
+                if var > 0 and var < risk_amount:
+                    # Pas risico aan op basis van VaR
+                    adjusted_risk = min(risk_amount, var)
+                    logger.info(f"Adjusted risk amount using VaR: {adjusted_risk:.2f}")
+                else:
+                    adjusted_risk = risk_amount
+                    logger.info(f"Using standard risk amount: {risk_amount:.2f}")
+            except Exception as e:
+                logger.error(f"Error calculating VaR: {str(e)}, using standard risk")
+                adjusted_risk = risk_amount
+
+            # Schat stop-loss afstand
+            if hasattr(self, 'sl_fixed_percent') and self.sl_fixed_percent > 0:
+                sl_distance = self.sl_fixed_percent
+            else:
+                # Default stop-loss percentage
+                sl_distance = 0.01  # 1%
+
+            # Bereken posititiegrootte
+            if price and price > 0:
+                # Als prijs bekend is, gebruik die voor precisere berekening
+                price_risk = price * sl_distance
+                position_size = adjusted_risk / price_risk
+            else:
+                # Fallback berekening
+                points_at_risk = capital * 0.01 / pip_value  # 1% van kapitaal als risicopunten
+                position_size = adjusted_risk / (points_at_risk * pip_value)
+
+            # Beperk positiegrootte tot redelijke waarden
+            position_size = max(0.01, min(position_size, 10.0))  # Min 0.01, max 10 lots
+
+            logger.info(
+                f"Calculated position size for {symbol}: {position_size:.2f} lots")
+            return position_size
         """
         Geavanceerde versie van calculate_position_size die ook rekening houdt met de huidige prijs.
 
@@ -416,3 +496,4 @@ def calculate_metrics(pf: vbt.Portfolio) -> Dict[str, Any]:
         logger.error(f"Fout bij berekenen metrics: {str(e)}", exc_info=True)
         return {'total_return': 0.0, 'sharpe_ratio': 0.0, 'max_drawdown': 0.0,
                 'win_rate': 0.0, 'trades_count': 0}
+

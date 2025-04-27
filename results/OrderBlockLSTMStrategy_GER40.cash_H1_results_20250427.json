@@ -1,0 +1,23 @@
+{
+  "strategy": "OrderBlockLSTMStrategy",
+  "symbol": "GER40.cash",
+  "timeframe": "H1",
+  "metrics": {
+    "total_return": -1.4109185819236891e-05,
+    "sharpe_ratio": -0.7093167170191248,
+    "sortino_ratio": -0.7093167170191246,
+    "max_drawdown": -1.4109185819233261e-05,
+    "cagr": -7.098782437098272e-06,
+    "calmar_ratio": 0.0,
+    "win_rate": 0.0,
+    "trades_count": 1,
+    "avg_winning_trade": 0.0,
+    "avg_losing_trade": -1.116073,
+    "profit_factor": 0.0,
+    "absolute_profit": -1.1160730000010517,
+    "avg_profit_per_trade": -1.1160730000010517,
+    "avg_monthly_profit": -0.030633293687128596,
+    "ftmo_compliant": true,
+    "profit_target_reached": false
+  }
+}

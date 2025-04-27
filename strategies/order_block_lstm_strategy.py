@@ -15,6 +15,7 @@ except ImportError:
 from strategies.base_strategy import BaseStrategy
 from strategies import register_strategy
 from risk.risk_management import RiskManager
+
 try:
     from config import logger, INITIAL_CAPITAL, SYMBOLS, CORRELATED_SYMBOLS, PIP_VALUES
 except ImportError as e:
@@ -25,6 +26,7 @@ except ImportError as e:
 
 class OrderBlock:
     """Represents an order block zone in the market."""
+
     def __init__(self, direction: int, time: pd.Timestamp, high: float, low: float):
         self.direction = direction  # 1 = bullish, -1 = bearish
         self.time = time
@@ -38,26 +40,16 @@ class OrderBlockLSTMStrategy(BaseStrategy):
     """
     Trading strategy based on order blocks, Fibonacci retracements, and LSTM predictions.
 
-    Version 1.4: Multi-symbol support (EURUSD, GER40.cash, US30.cash, XAUUSD),
-    FTMO-compliant RiskManager integration, and MT5 compatibility.
+    Version 2.1: Enhanced signal generation, LSTM input, and MT5 integration.
     """
-    def __init__(
-        self,
-        symbol: str = "XAUUSD",
-        timeframe: str = "H1",
-        window: int = 50,
-        lstm_threshold: float = 0.3,
-        sl_fixed_percent: float = 0.01,
-        tp_fixed_percent: float = 0.02,
-        use_trailing_stop: bool = False,
-        trailing_stop_percent: float = 0.015,
-        risk_per_trade: float = 0.01,
-        confidence_level: float = 0.95,
-        model_path: Optional[str] = None,
-        verbose_logging: bool = False,
-        fib_lookback: int = 20,
-        initial_capital: float = INITIAL_CAPITAL
-    ):
+
+    def __init__(self, symbol: str = "XAUUSD", timeframe: str = "H1", window: int = 50,
+                 lstm_threshold: float = 0.05, sl_fixed_percent: float = 0.01,
+                 tp_fixed_percent: float = 0.025, use_trailing_stop: bool = False,
+                 trailing_stop_percent: float = 0.015, risk_per_trade: float = 0.02,
+                 confidence_level: float = 0.95, model_path: Optional[str] = None,
+                 verbose_logging: bool = False, fib_lookback: int = 20,
+                 initial_capital: float = INITIAL_CAPITAL):
         """
         Initialize the OrderBlockLSTMStrategy.
 
@@ -70,7 +62,7 @@ class OrderBlockLSTMStrategy(BaseStrategy):
             tp_fixed_percent (float): Fixed take-profit percentage.
             use_trailing_stop (bool): Whether to use trailing stop.
             trailing_stop_percent (float): Trailing stop percentage.
-            risk_per_trade (float): Risk per trade as portfolio percentage (0.01 = 1%).
+            risk_per_trade (float): Risk per trade as portfolio percentage (0.02 = 2%).
             confidence_level (float): Confidence level for VaR calculation.
             model_path (Optional[str]): Path to pre-trained LSTM model (.h5 file).
             verbose_logging (bool): Enable detailed logging for debugging.
@@ -96,16 +88,12 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         self.initial_capital = initial_capital
 
         # Initialize RiskManager with FTMO-compliant settings
-        self.risk_manager = RiskManager(
-            confidence_level=self.confidence_level,
-            max_risk=self.risk_per_trade,
-            max_daily_loss_percent=0.05,  # FTMO: 5% daily loss
-            max_total_loss_percent=0.10,  # FTMO: 10% total loss
-            correlated_symbols=CORRELATED_SYMBOLS
-        )
+        self.risk_manager = RiskManager(confidence_level=self.confidence_level,
+                                        max_risk=self.risk_per_trade, max_daily_loss_percent=0.05,
+                                        max_total_loss_percent=0.10, correlated_symbols=CORRELATED_SYMBOLS)
 
-        print(f"\n==== OrderBlockLSTM Strategy v1.4 ({symbol}) ====")
-        print("Multi-symbol support and FTMO-compliant RiskManager")
+        print(f"\n==== OrderBlockLSTM Strategy v2.1 ({symbol}) ====")
+        print("Enhanced MQL5-based order block detection with relaxed trading criteria")
         print(f"Parameters: window={window}, lstm_threshold={lstm_threshold}, "
               f"sl={sl_fixed_percent}, tp={tp_fixed_percent}, risk={risk_per_trade}")
 
@@ -113,27 +101,90 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         def mse(y_true, y_pred):
             return tf.keras.losses.mean_squared_error(y_true, y_pred)
 
-        # Load LSTM model with custom objects
+        # Load LSTM model with improved error handling
         self.model = None
         self.scaler = MinMaxScaler()
-        if model_path and os.path.exists(model_path):
+        if model_path:
+            model_abs_path = os.path.abspath(model_path)
+            print(f"Attempting to load LSTM model from path: {model_abs_path}")
             try:
-                logger.debug(f"Attempting to load LSTM model from {model_path}")
-                self.model = load_model(model_path, custom_objects={'mse': mse}, compile=True)
-                logger.info(f"LSTM model loaded from {model_path}")
-                if self.verbose_logging:
-                    print(f"LSTM model loaded from {model_path}")
+                if os.path.exists(model_abs_path):
+                    self.model = load_model(model_abs_path, custom_objects={'mse': mse},
+                                            compile=True)
+                    print(f"✅ LSTM model successfully loaded from {model_abs_path}")
+                    logger.info(f"LSTM model loaded from {model_abs_path}")
+                else:
+                    print(f"⚠️ Model file not found at {model_abs_path}")
+                    logger.warning(f"Model file not found at {model_abs_path}")
             except Exception as e:
+                print(f"⚠️ Failed to load LSTM model: {str(e)}")
                 logger.error(f"Failed to load LSTM model: {str(e)}")
-                print(f"Warning: Failed to load LSTM model: {str(e)}")
         else:
             logger.warning(f"No LSTM model provided for {symbol}, using fallback logic (LSTM pred = 0)")
             if self.verbose_logging:
                 print(f"No LSTM model provided for {symbol}, using fallback logic")
 
+    def get_symbol_info(self, symbol: str) -> Dict[str, float]:
+        """
+        Get symbol information with robust fallback values.
+
+        Args:
+            symbol (str): Trading symbol.
+
+        Returns:
+            Dict[str, float]: Symbol parameters with fallbacks.
+        """
+        import MetaTrader5 as mt5
+
+        try:
+            if not mt5.initialize():
+                logger.warning(f"MT5 initialization failed for {symbol}.")
+                return self._get_fallback_symbol_info(symbol)
+
+            symbol_info = mt5.symbol_info(symbol)
+            if symbol_info is None:
+                logger.warning(f"Symbol info not available for {symbol}.")
+                mt5.shutdown()
+                return self._get_fallback_symbol_info(symbol)
+
+            tick_value = getattr(symbol_info, 'trade_tick_value', 0.0001 if symbol.startswith(('EUR', 'GBP', 'AUD')) else 10.0)
+            point = symbol_info.point
+            trade_tick_size = getattr(symbol_info, 'trade_tick_size', point)
+
+            if symbol.startswith(('EUR', 'GBP', 'USD', 'AUD')):
+                pip_value = 0.0001
+                point = 0.00001
+            else:
+                pip_value = 1.0
+                point = 0.1
+
+            logger.info(f"Symbol info attributes for {symbol}: {dir(symbol_info)}")
+            mt5.shutdown()
+            return {
+                "pip_value": pip_value,
+                "spread": symbol_info.spread * point,
+                "tick_value": tick_value,
+                "contract_size": symbol_info.trade_contract_size,
+                "point": point,
+                "trade_tick_size": trade_tick_size
+            }
+        except Exception as e:
+            logger.error(f"Error retrieving symbol info for {symbol}: {str(e)}")
+            mt5.shutdown()
+            return self._get_fallback_symbol_info(symbol)
+
+    def _get_fallback_symbol_info(self, symbol: str) -> Dict[str, float]:
+        """Fallback values based on symbol type."""
+        if symbol.startswith(('EUR', 'GBP', 'USD', 'AUD')):
+            return {"pip_value": 0.0001, "spread": 0.00002, "tick_value": 0.0001,
+                    "contract_size": 100000, "point": 0.00001, "trade_tick_size": 0.00001}
+        else:
+            return {"pip_value": 1.0, "spread": 0.5, "tick_value": 1.0,
+                    "contract_size": 1, "point": 0.1, "trade_tick_size": 0.1}
+
     def detect_order_blocks(self, df: pd.DataFrame) -> List[OrderBlock]:
         """
-        Detect order blocks based on MQL5 article logic.
+        Detect order blocks based on MQL5 article logic with relaxed criteria.
 
         Returns:
             List[OrderBlock]: List of detected order blocks.
@@ -144,31 +195,31 @@ class OrderBlockLSTMStrategy(BaseStrategy):
 
         obs = []
         logger.info(f"Analyzing {len(df)} candles for order blocks ({self.symbol})")
-        if self.verbose_logging:
-            print(f"Analyzing {len(df)} candles from {df.index[0]} to {df.index[-1]} ({self.symbol})")
 
         bullish_count = 0
         bearish_count = 0
-        for i in range(len(df) - 3):
-            if i + 2 >= len(df):
-                continue
-            c1, c2, c3 = df.iloc[i], df.iloc[i + 1], df.iloc[i + 2]
 
-            # Bullish OB: Two bullish candles followed by a bearish candle
-            if (c1['open'] < c1['close'] and
-                c2['open'] < c2['close'] and
-                c3['open'] > c3['close'] and
-                c3['open'] < c2['close']):
+        for i in range(len(df) - 4):
+            if i + 3 >= len(df):
+                continue
+
+            c1, c2, c3, c4 = df.iloc[i], df.iloc[i + 1], df.iloc[i + 2], df.iloc[i + 3]
+
+            if (c1['close'] > c1['open'] and
+                    c2['close'] > c2['open'] and
+                    c3['close'] < c3['open'] and
+                    (c3['high'] - c3['low']) > (c2['high'] - c2['low']) * 1.1 and
+                    c3['open'] < c2['close']):
                 obs.append(OrderBlock(1, c3.name, c3['high'], c3['low']))
                 bullish_count += 1
                 if self.verbose_logging and bullish_count % 10 == 1:
                     logger.info(f"Bullish OB at {c3.name}: {c3['low']:.5f}-{c3['high']:.5f} ({self.symbol})")
                     print(f"Bullish OB at {c3.name}: {c3['low']:.5f}-{c3['high']:.5f} ({self.symbol})")
 
-            # Bearish OB: Two bearish candles followed by a bullish candle
-            elif (c1['open'] > c1['close'] and
-                  c2['open'] > c2['close'] and
-                  c3['open'] < c3['close'] and
+            elif (c1['close'] < c1['open'] and
+                  c2['close'] < c2['open'] and
+                  c3['close'] > c3['open'] and
+                  (c3['high'] - c3['low']) > (c2['high'] - c2['low']) * 1.1 and
                   c3['open'] > c2['close']):
                 obs.append(OrderBlock(-1, c3.name, c3['high'], c3['low']))
                 bearish_count += 1
@@ -198,43 +249,60 @@ class OrderBlockLSTMStrategy(BaseStrategy):
             Dict[str, float]: Dictionary with Fibonacci levels (23.6%, 38.2%, 50.0%, 61.8%).
         """
         diff = swing_high - swing_low
-        return {
-            '23.6%': swing_high - 0.236 * diff,
-            '38.2%': swing_high - 0.382 * diff,
-            '50.0%': swing_high - 0.5 * diff,
-            '61.8%': swing_high - 0.618 * diff
-        }
+        return {'23.6%': swing_high - 0.236 * diff, '38.2%': swing_high - 0.382 * diff,
+                '50.0%': swing_high - 0.5 * diff, '61.8%': swing_high - 0.618 * diff}
+
+    def calculate_rsi(self, series: pd.Series, period: int = 14) -> pd.Series:
+        """Calculate RSI indicator."""
+        delta = series.diff()
+        gain = delta.clip(lower=0)
+        loss = -delta.clip(upper=0)
+        avg_gain = gain.rolling(window=period).mean()
+        avg_loss = loss.rolling(window=period).mean()
+        rs = avg_gain / avg_loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
 
     def prepare_lstm_input(self, df: pd.DataFrame) -> np.ndarray:
         """
-        Prepare input for the LSTM model using OHLC data.
+        Prepare input for the LSTM model using enhanced features.
 
         Returns:
-            np.ndarray: Normalized input array of shape (1, window, 4).
+            np.ndarray: Normalized input array of shape (1, window, n_features).
         """
         if len(df) < self.window:
             logger.warning(f"Insufficient data for LSTM: need {self.window}, got {len(df)} ({self.symbol})")
-            return np.zeros((1, self.window, 4))
+            return np.zeros((1, self.window, 9))
 
-        recent_data = df.iloc[-self.window:][['open', 'high', 'low', 'close']].values
-        normalized_data = self.scaler.fit_transform(recent_data.reshape(-1, 4)).reshape(self.window, 4)
-        return np.array([normalized_data])
+        df = df.copy()
+        df['ma20'] = df['close'].rolling(window=20).mean()
+        df['ma50'] = df['close'].rolling(window=50).mean()
+        df['rsi'] = self.calculate_rsi(df['close'], 14)
 
-    def generate_signals(self, df: pd.DataFrame, current_capital: float = None) -> Tuple[
-        pd.Series, pd.Series, pd.Series
-    ]:
+        feature_columns = ['open', 'high', 'low', 'close', 'tick_volume', 'ma20', 'ma50', 'rsi']
+        if 'spread' in df.columns:
+            feature_columns.append('spread')
+
+        recent_data = df.iloc[-self.window:][feature_columns].fillna(method='bfill').values
+        normalized_data = self.scaler.fit_transform(recent_data)
+        logger.info(f"LSTM input shape: {np.array([normalized_data]).shape}")
+        return np.array([normalized_data.reshape(self.window, len(feature_columns))])
+
+    def generate_signals(self, df: pd.DataFrame, current_capital: float = None) -> \
+            Tuple[pd.Series, pd.Series, pd.Series]:
         """
-        Generate entries, stop-loss, and take-profit signals.
+        Generate entry, stop-loss, and take-profit signals with relaxed MQL5-inspired criteria.
 
         Args:
             df (pd.DataFrame): DataFrame with OHLC data.
             current_capital (float, optional): Current account capital. Defaults to initial_capital.
 
         Returns:
-            Tuple[pd.Series, pd.Series, pd.Series]:
-            (entries, sl_stop, tp_stop).
+            Tuple[pd.Series, pd.Series, pd.Series]: (entries, sl_stop, tp_stop).
             entries: 1 for buy, -1 for sell, 0 for hold.
         """
+        print(f"DEBUG: Analysing {len(df)} candles for OrderBlockLSTMStrategy with {self.symbol}")
+
         required_columns = ['open', 'high', 'low', 'close']
         if not all(col in df.columns for col in required_columns):
             raise ValueError(f"DataFrame missing required columns: {required_columns} for {self.symbol}")
@@ -247,11 +315,9 @@ class OrderBlockLSTMStrategy(BaseStrategy):
             print(f"\nGenerating signals for {len(df)} candles ({self.symbol})...")
         logger.info(f"Generating signals for {len(df)} candles ({self.symbol})")
 
-        # Use provided capital or fallback to initial_capital
         capital = current_capital or self.initial_capital
 
-        # FTMO compliance: Check drawdown and loss limits
-        max_value = capital  # Placeholder; ideally track max portfolio value via MT5
+        max_value = capital
         if self.risk_manager.monitor_drawdown(capital, max_value):
             logger.warning(f"Drawdown limit exceeded for {self.symbol}, no new signals generated")
             return entries, sl_stop, tp_stop
@@ -260,15 +326,15 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         max_total_loss = self.risk_manager.get_max_total_loss(capital)
         logger.info(f"FTMO limits for {self.symbol}: Max daily loss={max_daily_loss:.2f}, Max total loss={max_total_loss:.2f}")
 
-        # Detect order blocks
         order_blocks = self.detect_order_blocks(df)
+        print(f"DEBUG: Detected {len(order_blocks)} order blocks")
+
         if not order_blocks:
             if self.verbose_logging:
                 print(f"No order blocks detected for {self.symbol}, returning empty signals")
             logger.info(f"No order blocks detected for {self.symbol}, returning empty signals")
             return entries, sl_stop, tp_stop
 
-        # Prepare LSTM prediction
         lstm_pred = 0.0
         if self.model is not None:
             try:
@@ -286,77 +352,77 @@ class OrderBlockLSTMStrategy(BaseStrategy):
                 print(f"No LSTM model available for {self.symbol}, using default LSTM value of 0")
             logger.warning(f"No LSTM model available for {self.symbol}, using default LSTM value of 0")
 
-        # Time filter: only consider recent order blocks (last 14 days for H1)
         try:
-            time_threshold = df.index[-int(14 * 24)]  # 14 days * 24 H1 candles
+            time_threshold = df.index[-int(90 * 24)]
         except IndexError:
-            time_threshold = df.index[0]  # Fallback to start if data is too short
+            time_threshold = df.index[0]
 
         current_price = df['close'].iloc[-1]
         if self.verbose_logging:
             print(f"Current price: {current_price:.5f}, time filter: OBs after {time_threshold} ({self.symbol})")
+            print(f"LSTM prediction: {lstm_pred:.4f}")
         logger.info(f"Current price: {current_price:.5f}, time filter: OBs after {time_threshold} ({self.symbol})")
 
-        # Calculate returns for VaR
         returns = df['close'].pct_change().dropna()
-
-        # Placeholder for open positions (to be integrated with MT5)
-        open_positions = {}  # e.g., {'XAUUSD': 2, 'EURUSD': 1}
+        open_positions = {}
 
         signals_checked = 0
         recent_ob_count = 0
         signals_generated = 0
+
         for ob in order_blocks:
             signals_checked += 1
-            if ob.time < time_threshold:
+
+            if ob.time < time_threshold and not self.verbose_logging:
                 continue
+
             recent_ob_count += 1
 
-            # Calculate Fibonacci levels with lookback
             past_data = df.loc[:ob.time].tail(self.fib_lookback)
             if past_data.empty:
                 continue
+
             swing_high = past_data['high'].max()
             swing_low = past_data['low'].min()
             fib = self.calculate_fibonacci_levels(swing_high, swing_low)
 
-            if self.verbose_logging and (signals_checked % 10 == 1 or recent_ob_count <= 5):
+            if self.verbose_logging and (signals_checked <= 10 or signals_checked % 50 == 0):
                 print(f"\nOrder Block #{signals_checked}: {'Bullish' if ob.direction == 1 else 'Bearish'} at {ob.time} ({self.symbol})")
                 print(f"  Price range: {ob.low:.5f}-{ob.high:.5f}")
                 print(f"  Fibonacci levels: 23.6%={fib['23.6%']:.5f}, 38.2%={fib['38.2%']:.5f}, 50.0%={fib['50.0%']:.5f}, 61.8%={fib['61.8%']:.5f}")
-                logger.info(f"Order Block #{signals_checked}: {'Bullish' if ob.direction == 1 else 'Bearish'} at {ob.time} ({self.symbol})")
-                logger.info(f"  Price range: {ob.low:.5f}-{ob.high:.5f}")
-                logger.info(f"  Fibonacci levels: 23.6%={fib['23.6%']:.5f}, 38.2%={fib['38.2%']:.5f}, 50.0%={fib['50.0%']:.5f}, 61.8%={fib['61.8%']:.5f}")
+                print(f"  Current price: {current_price:.5f}")
 
-            # Check Fibonacci zones and LSTM for signals
-            in_fib_zone = False
-            lstm_ok = False
-            if ob.direction == 1:  # Bullish
-                in_618_zone = fib['61.8%'] <= current_price <= ob.high
-                in_50_zone = fib['50.0%'] <= current_price <= ob.high
-                in_382_zone = fib['38.2%'] <= current_price <= ob.high
-                in_236_zone = fib['23.6%'] <= current_price <= ob.high
-                in_fib_zone = in_618_zone or in_50_zone or in_382_zone or in_236_zone
-                lstm_ok = lstm_pred > self.lstm_threshold
-            elif ob.direction == -1:  # Bearish
-                in_618_zone = ob.low <= current_price <= fib['61.8%']
-                in_50_zone = ob.low <= current_price <= fib['50.0%']
-                in_382_zone = ob.low <= current_price <= fib['38.2%']
-                in_236_zone = ob.low <= current_price <= fib['23.6%']
-                in_fib_zone = in_618_zone or in_50_zone or in_382_zone or in_236_zone
-                lstm_ok = lstm_pred < -self.lstm_threshold
+            trading_condition = False
 
-            if in_fib_zone and lstm_ok and not ob.traded:
-                # Calculate position size with RiskManager
-                size = self.risk_manager.calculate_adjusted_position_size(
-                    capital=capital,
-                    returns=returns,
-                    symbol=self.symbol,
-                    price=current_price,
-                    open_positions=open_positions
-                )
+            if ob.direction == 1:
+                price_near_ob = abs(current_price - ob.low) / ob.low < 0.02
+                fib_zone = (fib['61.8%'] * 0.9) <= current_price <= (fib['38.2%'] * 1.1)
+                lstm_trend_ok = lstm_pred > -0.05
+                trading_condition = price_near_ob and (fib_zone or lstm_trend_ok) and not ob.traded
+
+                if self.verbose_logging and (signals_checked <= 5 or signals_checked % 50 == 0):
+                    print(f"  Bullish trading conditions: price_near_ob={price_near_ob}, fib_zone={fib_zone}, lstm_trend_ok={lstm_trend_ok}")
+
+            elif ob.direction == -1:
+                price_near_ob = abs(current_price - ob.high) / ob.high < 0.02
+                fib_zone = (fib['38.2%'] * 0.9) <= current_price <= (fib['61.8%'] * 1.1)
+                lstm_trend_ok = lstm_pred < 0.05
+                trading_condition = price_near_ob and (fib_zone or lstm_trend_ok) and not ob.traded
+
+                if self.verbose_logging and (signals_checked <= 5 or signals_checked % 50 == 0):
+                    print(f"  Bearish trading conditions: price_near_ob={price_near_ob}, fib_zone={fib_zone}, lstm_trend_ok={lstm_trend_ok}")
+
+            if trading_condition:
+                try:
+                    size = self.risk_manager.calculate_adjusted_position_size(
+                        capital=capital, returns=returns, symbol=self.symbol,
+                        price=current_price, open_positions=open_positions)
+                except Exception as e:
+                    logger.error(f"Error calculating position size: {str(e)}")
+                    size = 1.0
+
                 if size > 0:
-                    entries.iloc[-1] = ob.direction  # 1 for buy, -1 for sell
+                    entries.iloc[-1] = ob.direction
                     signals_generated += 1
                     ob.traded = True
                     if self.verbose_logging:
@@ -370,9 +436,7 @@ class OrderBlockLSTMStrategy(BaseStrategy):
             print(f"  Signals generated: {signals_generated}")
         logger.info(f"Signal generation results for {self.symbol}: {signals_generated} signals from {recent_ob_count} recent OBs")
 
-        # Clear VaR cache to prevent memory buildup
         self.risk_manager.clear_cache()
-
         return entries, sl_stop, tp_stop
 
     @classmethod
@@ -386,19 +450,14 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         Returns:
             Dict[str, List[Any]]: Dictionary of parameter names and their possible values.
         """
-        return {
-            'symbol': SYMBOLS,
-            'window': [30, 50, 60],
-            'lstm_threshold': [0.2, 0.3, 0.4],
-            'sl_fixed_percent': [0.01, 0.015, 0.02],
-            'tp_fixed_percent': [0.02, 0.03, 0.04],
-            'use_trailing_stop': [False, True],
-            'trailing_stop_percent': [0.01, 0.015, 0.02],
-            'risk_per_trade': [0.005, 0.01, 0.015],
-            'confidence_level': [0.90, 0.95, 0.99],
-            'fib_lookback': [10, 20, 30],
-            'initial_capital': [10000.0, 50000.0, 100000.0]
-        }
+        return {'symbol': SYMBOLS, 'window': [30, 50, 60],
+                'lstm_threshold': [0.05, 0.1, 0.15],
+                'sl_fixed_percent': [0.01, 0.015, 0.02],
+                'tp_fixed_percent': [0.02, 0.025, 0.03], 'use_trailing_stop': [False, True],
+                'trailing_stop_percent': [0.01, 0.015, 0.02],
+                'risk_per_trade': [0.01, 0.02, 0.03],
+                'confidence_level': [0.90, 0.95, 0.99], 'fib_lookback': [10, 20, 30],
+                'initial_capital': [10000.0, 50000.0, 100000.0]}
 
     @classmethod
     def get_parameter_descriptions(cls) -> Dict[str, str]:
@@ -408,19 +467,17 @@ class OrderBlockLSTMStrategy(BaseStrategy):
         Returns:
             Dict[str, str]: Dictionary of parameter names and their descriptions.
         """
-        return {
-            'symbol': 'Trading symbol (e.g., XAUUSD)',
-            'timeframe': 'Timeframe for trading (e.g., H1)',
-            'window': 'Number of periods for LSTM input sequence',
-            'lstm_threshold': 'Threshold for LSTM signals (0 to 1)',
-            'sl_fixed_percent': 'Fixed stop-loss percentage',
-            'tp_fixed_percent': 'Fixed take-profit percentage',
-            'use_trailing_stop': 'Whether to use trailing stop (true/false)',
-            'trailing_stop_percent': 'Trailing stop percentage',
-            'risk_per_trade': 'Risk per trade as percentage of portfolio (0.01 = 1%)',
-            'confidence_level': 'Confidence level for VaR calculation',
-            'model_path': 'Path to pre-trained LSTM model (.h5 file)',
-            'verbose_logging': 'Enable detailed logging for debugging',
-            'fib_lookback': 'Lookback period for Fibonacci swing high/low calculation',
-            'initial_capital': 'Initial account capital for risk management'
-        }
+        return {'symbol': 'Trading symbol (e.g., XAUUSD)',
+                'timeframe': 'Timeframe for trading (e.g., H1)',
+                'window': 'Number of periods for LSTM input sequence',
+                'lstm_threshold': 'Threshold for LSTM signals (0 to 1)',
+                'sl_fixed_percent': 'Fixed stop-loss percentage',
+                'tp_fixed_percent': 'Fixed take-profit percentage',
+                'use_trailing_stop': 'Whether to use trailing stop (true/false)',
+                'trailing_stop_percent': 'Trailing stop percentage',
+                'risk_per_trade': 'Risk per trade as percentage of portfolio (0.02 = 2%)',
+                'confidence_level': 'Confidence level for VaR calculation',
+                'model_path': 'Path to pre-trained LSTM model (.h5 file)',
+                'verbose_logging': 'Enable detailed logging for debugging',
+                'fib_lookback': 'Lookback period for Fibonacci swing high/low calculation',
+                'initial_capital': 'Initial account capital for risk management'}

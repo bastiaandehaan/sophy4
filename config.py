@@ -8,7 +8,7 @@ LOG_DIR.mkdir(exist_ok=True, parents=True)
 LOG_FILE: Path = LOG_DIR / "sophy4_backtest.log"
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format='%(asctime)s - %(levelname)s - %(message)s',
     filename=LOG_FILE,
     filemode='a'
