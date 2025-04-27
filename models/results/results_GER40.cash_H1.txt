@@ -1,12 +1,12 @@
 LSTM Training Results for GER40.cash on H1
 Sequence Length: 50
 LSTM Units: 50
-Data Points: 17412
+Data Points: 17408
 Features: ['open', 'high', 'low', 'close', 'tick_volume', 'spread']
 
 Evaluation Metrics:
-  mse: 6309534.0831
-  rmse: 2511.8786
-  mae: 2078.2729
-  correlation: 0.6932
-  directional_accuracy: 0.5014
+  mse: 27156527.2265
+  rmse: 5211.1925
+  mae: 5016.7145
+  correlation: nan
+  directional_accuracy: 0.4808
