@@ -34,7 +34,7 @@ A modular trading framework for backtesting, live trading, risk management, moni
 
 - **BollongStrategy**: A long-only Bollinger Bands breakout strategy.
 
-## Configuration
+## Configuratie
 
 Edit configuration settings in `config.py` including:
 - Initial capital
@@ -57,3 +57,27 @@ See `requirements.txt` for a complete list of dependencies. Key packages include
 - Pandas 2.2.3
 - NumPy 2.1.3
 - MetaTrader5 5.0.4874
+## Beschikbare Strategieën
+
+- **BollongStrategy**: Een long-only Bollinger Bands uitbraakstrategie.
+
+## Configuratie
+
+Configuratie-instellingen kunnen worden aangepast in `config.py`, waaronder:
+- Initieel kapitaal
+- Risicobeheersparameters
+- FTMO-compliance-instellingen
+- Tijdsframe-instellingen in `timeframe_config.json`
+
+## Documentatie
+
+Voor meer gedetailleerde informatie, raadpleeg `docs/` en de `user_manual.md`, met uitgebreide documentatie over:
+- Systeemarchitectuur
+- Modulebeschrijvingen
+- Maken van aangepaste strategieën
+- Risicobeheersfuncties
+- Prestatiemonitoring
+
+## Bijdragen
+
+Bijdragen zijn welkom! Voel vrij om een pull request in te dienen of issues te melden.
