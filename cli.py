@@ -2,8 +2,17 @@
 """
 Sophy4 Trading Framework - CLI Application
 """
-from datetime import datetime
+import os
+# Onderdruk TensorFlow warnings
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+
+import sys
 from pathlib import Path
+# Fix import path
+sys.path.insert(0, str(Path(__file__).parent))
+
+from datetime import datetime
 from typing import Optional, List
 import json
 
@@ -141,79 +150,4 @@ def run_optimization(strategy: str = typer.Argument(..., help="Strategy to optim
     from optimization.optimize import quick_optimize
 
     with console.status("[bold green]Running optimization...") as status:
-        results = quick_optimize(strategy_name=strategy, symbol=symbol,
-            timeframe=timeframe, days=days, metric=metric, top_n=top_n, quick=quick)
-
-    if not results:
-        console.print("[red]Optimization failed or no results found[/red]")
-        raise typer.Exit(1)
-
-    # Display results in a nice table
-    table = Table(title=f"Top {len(results)} Results - {strategy} on {symbol}")
-    table.add_column("#", style="cyan", width=3)
-    table.add_column("Sharpe", style="green")
-    table.add_column("Return", style="green")
-    table.add_column("Drawdown", style="red")
-    table.add_column("Win Rate", style="green")
-    table.add_column("Trades", style="cyan")
-
-    for i, result in enumerate(results):
-        metrics = result['metrics']
-        table.add_row(str(i + 1), f"{metrics.get('sharpe_ratio', 0):.2f}",
-            f"{metrics.get('total_return', 0) * 100:.2f}%",
-            f"{metrics.get('max_drawdown', 0) * 100:.2f}%",
-            f"{metrics.get('win_rate', 0) * 100:.2f}%",
-            str(metrics.get('trades_count', 0)))
-
-    console.print(table)
-
-    # Save results info
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    filename = f"optimization_{strategy}_{symbol}_{timestamp}.json"
-    console.print(f"\n[green]Results saved to: results/{filename}[/green]")
-
-
-@monitor_app.command("live")
-def monitor_live_trading(
-        symbols: List[str] = typer.Option(["EURUSD"], "--symbols", "-s",
-                                          help="Symbols to monitor"),
-        interval: int = typer.Option(60, "--interval", "-i",
-                                     help="Update interval in seconds"),
-        duration: Optional[int] = typer.Option(None, "--duration", "-d",
-                                               help="Duration in seconds")):
-    """Monitor live trading positions and performance."""
-    from monitor.monitor import run_monitor_loop
-
-    console.print(f"[green]Starting live monitoring for {', '.join(symbols)}[/green]")
-    console.print(f"Update interval: {interval}s")
-    if duration:
-        console.print(f"Duration: {duration}s")
-
-    try:
-        run_monitor_loop(live=True, symbols=symbols, interval=interval,
-            duration=duration)
-    except KeyboardInterrupt:
-        console.print("\n[yellow]Monitoring stopped by user[/yellow]")
-
-
-@app.command()
-def version():
-    """Show Sophy4 version information."""
-    console.print("[bold cyan]Sophy4 Trading Framework[/bold cyan]")
-    console.print("Version: 0.1.0")
-    console.print("Python: 3.10+")
-    console.print("Author: Sophy4 Team")
-
-
-@app.callback()
-def main_callback():
-    """
-    Sophy4 Trading Framework - Professional trading with FTMO compliance.
-
-    Use --help with any command for more information.
-    """
-    pass
-
-
-if __name__ == "__main__":
-    app()
+        r

@@ -2,6 +2,7 @@
 import importlib
 import inspect
 import logging
+import os
 from pathlib import Path
 
 from .base_strategy import BaseStrategy
@@ -25,7 +26,9 @@ def register_strategy(strategy_class):
         raise TypeError(f"{strategy_class.__name__} moet BaseStrategy subklassen")
 
     STRATEGIES[strategy_class.__name__] = strategy_class
-    print(f"Strategie '{strategy_class.__name__}' geregistreerd")
+    # Alleen printen in debug mode
+    if os.getenv('SOPHY4_DEBUG'):
+        print(f"Strategie '{strategy_class.__name__}' geregistreerd")
     return strategy_class
 
 
@@ -117,10 +120,12 @@ def _import_strategies():
             try:
                 importlib.import_module(f"strategies.{module_name}")
             except ImportError as e:
-                print(f"Waarschuwing: Kon strategie '{module_name}' niet laden: {e}")
+                # Gebruik logging in plaats van print voor consistentie
+                logger.warning(f"Kon strategie '{module_name}' niet laden: {e}")
 
     # Log de geregistreerde strategieën voor debug doeleinden
-    debug_strategies()
+    if os.getenv('SOPHY4_DEBUG'):
+        debug_strategies()
 
 
 # Importeer alle strategieën bij import van deze module

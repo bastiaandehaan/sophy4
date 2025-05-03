@@ -4,7 +4,18 @@ from typing import Optional, Union, Dict
 import MetaTrader5 as mt5
 import pandas as pd
 
-from config import logger
+# Robuuste import voor config
+try:
+    from config import logger
+except ImportError:
+    try:
+        from ..config import logger
+    except ImportError:
+        import sys
+        from pathlib import Path
+        # Voeg parent directory toe aan path
+        sys.path.append(str(Path(__file__).parent.parent))
+        from config import logger
 
 TIMEFRAME_MAP: Dict[str, int] = {'M1': mt5.TIMEFRAME_M1, 'M5': mt5.TIMEFRAME_M5,
                                  'M15': mt5.TIMEFRAME_M15, 'M30': mt5.TIMEFRAME_M30, 'H1': mt5.TIMEFRAME_H1,
