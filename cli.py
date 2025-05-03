@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 """
-Sophy4 Trading Framework - Main CLI application
+Sophy4 Trading Framework - CLI Application
 """
 from datetime import datetime
 from pathlib import Path
