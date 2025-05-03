@@ -1,18 +1,21 @@
 import argparse
 from pathlib import Path
 from typing import Tuple, Dict, Any
+from datetime import datetime, timedelta
+import time
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
+from tqdm import tqdm
 
 try:
     import tensorflow as tf
     from tensorflow.keras.models import Sequential, load_model
     from tensorflow.keras.layers import LSTM, Dense, Dropout, Layer, Input
     from tensorflow.keras.optimizers import Adam
-    from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
+    from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
     import keras_tuner as kt
 except ImportError:
     print(
@@ -26,6 +29,23 @@ import vectorbt as vbt
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import logger
 from strategies.base_strategy import BaseStrategy
+
+
+# Custom callback for trial progress
+class TrialProgressCallback(Callback):
+    def __init__(self, trial_num, total_trials):
+        super().__init__()
+        self.trial_num = trial_num
+        self.total_trials = total_trials
+        self.trial_start_time = time.time()
+
+    def on_epoch_begin(self, epoch, logs=None):
+        self.epoch_start_time = time.time()
+
+    def on_epoch_end(self, epoch, logs=None):
+        epoch_time = time.time() - self.epoch_start_time
+        print(
+            f"   Trial {self.trial_num}/{self.total_trials} - Epoch {epoch + 1} completed in {epoch_time:.1f}s")
 
 
 # Attention Layer for LSTM
@@ -76,6 +96,7 @@ def prepare_data(df: pd.DataFrame, seq_len: int, target_column: str = 'close',
         raise ValueError(f"DataFrame missing required columns: {required_columns}")
 
     # Enhanced Feature Engineering with VectorBT
+    print("🔧 Calculating technical indicators...")
     df['ma20'] = vbt.MA.run(df['close'], window=20).ma
     df['ma50'] = vbt.MA.run(df['close'], window=50).ma
     df['rsi'] = vbt.RSI.run(df['close'], window=14).rsi
@@ -98,6 +119,7 @@ def prepare_data(df: pd.DataFrame, seq_len: int, target_column: str = 'close',
     df = df.fillna(method='bfill')
 
     # Normalize features
+    print("📊 Normalizing data...")
     scaler = MinMaxScaler()
     scaled_data = scaler.fit_transform(df[enhanced_features])
 
@@ -163,6 +185,7 @@ def evaluate_model(model, X_test: np.ndarray, y_test: np.ndarray, scaler,
     Returns:
         Dict with evaluation metrics.
     """
+    print("📈 Evaluating model performance...")
     predictions = model.predict(X_test, verbose=0)
 
     mse = np.mean((predictions - y_test) ** 2)
@@ -207,7 +230,16 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
     Returns:
         Dict with training results.
     """
-    logger.info(f"Starting LSTM training for {symbol} on {timeframe}")
+    training_start_time = time.time()
+
+    print(f"\n{'=' * 60}")
+    print(f"🚀 LSTM MODEL TRAINING")
+    print(f"{'=' * 60}")
+    print(f"Symbol: {symbol}")
+    print(f"Timeframe: {timeframe}")
+    print(f"Training Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print(f"Configuration: {days} days | {seq_len} sequence | {epochs} epochs")
+    print(f"{'=' * 60}\n")
 
     # Create output directory structure
     output_path = Path(output_dir)
@@ -220,19 +252,21 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
     results_dir.mkdir(exist_ok=True)
 
     # Fetch historical data
+    print("📥 Fetching historical data...")
     df = BaseStrategy.fetch_historical_data(symbol=symbol, timeframe=timeframe,
                                             days=days)
     if df is None or df.empty:
         logger.error(f"Failed to fetch historical data for {symbol} on {timeframe}")
         return {"success": False, "error": "Failed to fetch data"}
 
-    logger.info(f"Fetched {len(df)} candles for {symbol} on {timeframe}")
+    print(f"✓ Fetched {len(df)} candles for {symbol} on {timeframe}")
 
     # Prepare data
     feature_columns = ['open', 'high', 'low', 'close', 'tick_volume']
     if 'spread' in df.columns:
         feature_columns.append('spread')
 
+    print("🔄 Preparing data for LSTM...")
     X, y, scaler = prepare_data(df, seq_len, feature_columns=feature_columns)
     if len(X) == 0:
         logger.error(f"Insufficient data to train LSTM for {symbol} on {timeframe}")
@@ -243,6 +277,8 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
     X_train, X_test = X[:train_size], X[train_size:]
     y_train, y_test = y[:train_size], y[train_size:]
 
+    print(f"✓ Data split: {len(X_train)} training samples, {len(X_test)} test samples")
+
     # Create TensorFlow dataset for efficient training
     train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train)).batch(
         batch_size).prefetch(tf.data.AUTOTUNE)
@@ -250,9 +286,14 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
         batch_size).prefetch(tf.data.AUTOTUNE)
 
     # Hyperparameter tuning with Keras Tuner
+    print("\n🔍 Starting hyperparameter search...")
+    total_trials = 10
+    trial_times = []
+
     tuner = kt.Hyperband(lambda hp: build_lstm_model(hp, seq_len, X.shape[2]),
-        objective='val_loss', max_epochs=epochs, directory=str(results_dir / 'tuner'),
-        project_name=f'lstm_{symbol}_{timeframe}')
+                         objective='val_loss', max_epochs=epochs,
+                         directory=str(results_dir / 'tuner'),
+                         project_name=f'lstm_{symbol}_{timeframe}')
 
     # Callbacks
     callbacks = [
@@ -261,23 +302,61 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
             filepath=str(model_dir / f"lstm_{symbol}_{timeframe}_checkpoint.h5"),
             save_best_only=True, monitor='val_loss')]
 
-    # Search for best hyperparameters
-    tuner.search(train_dataset, validation_data=test_dataset, callbacks=callbacks,
-                 verbose=verbose)
+    # Search for best hyperparameters with progress tracking
+    print(f"\n📊 Running {total_trials} trials for hyperparameter optimization")
+    print(
+        f"Estimated completion time: {int(total_trials * 2)} - {int(total_trials * 5)} minutes\n")
+
+    trial_start_time = time.time()
+
+    # Wrapping tuner search with custom progress
+    with tqdm(total=total_trials, desc="Training Progress", unit="trial",
+              bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]") as pbar:
+
+        original_on_trial_end = tuner.on_trial_end
+
+        def on_trial_end_wrapper(trial):
+            nonlocal trial_start_time
+            trial_end_time = time.time()
+            trial_duration = trial_end_time - trial_start_time
+            trial_times.append(trial_duration)
+
+            # Calculate average time and ETA
+            avg_trial_time = sum(trial_times) / len(trial_times)
+            completed_trials = len(trial_times)
+            remaining_trials = total_trials - completed_trials
+            eta_seconds = remaining_trials * avg_trial_time
+            eta_time = datetime.now() + timedelta(seconds=eta_seconds)
+
+            pbar.set_postfix_str(
+                f"Trial time: {trial_duration:.1f}s | ETA: {eta_time.strftime('%H:%M:%S')}")
+            pbar.update(1)
+
+            trial_start_time = time.time()
+            original_on_trial_end(trial)
+
+        tuner.on_trial_end = on_trial_end_wrapper
+
+        tuner.search(train_dataset, validation_data=test_dataset, callbacks=callbacks,
+                     verbose=verbose)
 
     # Get the best model
+    print("\n🏆 Retrieving best model...")
     best_model = tuner.get_best_models(num_models=1)[0]
     best_hyperparameters = tuner.get_best_hyperparameters(num_trials=1)[0]
 
     # Evaluate model
     metrics = evaluate_model(best_model, X_test, y_test, scaler, feature_columns,
                              str(results_dir), symbol)
-    logger.info(f"Model evaluation metrics: {metrics}")
+
+    print("\n📊 Model Evaluation Metrics:")
+    for k, v in metrics.items():
+        print(f"   {k}: {v:.4f}")
 
     # Save final model
     model_path = model_dir / f"lstm_{symbol}_{timeframe}.h5"
     best_model.save(str(model_path))
-    logger.info(f"LSTM model saved to {model_path}")
+    print(f"\n💾 LSTM model saved to {model_path}")
 
     # Save results summary
     with open(str(results_dir / f"results_{symbol}_{timeframe}.txt"), 'w') as f:
@@ -289,6 +368,14 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
         f.write("Evaluation Metrics:\n")
         for k, v in metrics.items():
             f.write(f"  {k}: {v:.4f}\n")
+
+    total_time = time.time() - training_start_time
+
+    print(f"\n{'=' * 60}")
+    print(f"✅ TRAINING COMPLETED")
+    print(f"Total Time: {total_time / 60:.1f} minutes")
+    print(f"Model Path: {model_path}")
+    print(f"{'=' * 60}\n")
 
     return {"success": True, "model_path": str(model_path), "metrics": metrics,
             "data_points": len(df), "sequence_length": seq_len}
@@ -317,8 +404,9 @@ def main() -> None:
     args = parser.parse_args()
 
     train_and_save_model(symbol=args.symbol, timeframe=args.timeframe, days=args.days,
-        seq_len=args.seq_len, output_dir=args.output, epochs=args.epochs,
-        batch_size=args.batch_size, verbose=args.verbose)
+                         seq_len=args.seq_len, output_dir=args.output,
+                         epochs=args.epochs, batch_size=args.batch_size,
+                         verbose=args.verbose)
 
 
 if __name__ == "__main__":
