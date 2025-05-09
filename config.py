@@ -8,19 +8,30 @@ LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True, parents=True)
 LOG_FILE = LOG_DIR / "sophy4_backtest.log"
 
+# Basisconfig op ERROR niveau
 logging.basicConfig(
-    level=logging.WARNING,
+    level=logging.ERROR,  # Alleen kritieke meldingen tonen
     format='%(asctime)s - %(levelname)s - %(message)s',
     filename=LOG_FILE,
     filemode='a'
 )
 logger = logging.getLogger()
 
-if not any(isinstance(h, logging.StreamHandler) for h in logger.handlers):
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-    logger.addHandler(console_handler)
+# Verwijder eventuele bestaande handlers voordat we nieuwe toevoegen
+for handler in logger.handlers[:]:
+    logger.removeHandler(handler)
+
+# Voeg file handler toe op ERROR niveau
+file_handler = logging.FileHandler(LOG_FILE)
+file_handler.setLevel(logging.ERROR)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+logger.addHandler(file_handler)
+
+# Voeg console handler toe op ERROR niveau
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.ERROR)  # Gebruik ERROR in plaats van INFO
+console_handler.setFormatter(logging.Formatter('%(levelname)s: %(message)s'))  # Vereenvoudigde formatting
+logger.addHandler(console_handler)
 
 # FTMO limits
 MAX_DAILY_LOSS = 0.05
@@ -45,19 +56,15 @@ def get_initial_capital() -> float:
     """Retrieve account balance via MT5."""
     try:
         if not mt5.initialize():
-            logger.warning("MT5 initialization failed, using default capital.")
             return 10000.0
 
         account_info = mt5.account_info()
         if account_info is None:
-            logger.warning("Cannot retrieve account info, using default capital.")
             return 10000.0
 
         balance = account_info.balance
-        logger.info(f"Account balance (INITIAL_CAPITAL): {balance}")
         return balance
-    except Exception as e:
-        logger.error(f"Error retrieving account balance: {str(e)}")
+    except Exception:
         return 10000.0
     finally:
         mt5.shutdown()
@@ -68,19 +75,15 @@ def get_pip_value(symbol: str) -> float:
     """Retrieve pip value for a given symbol via MT5."""
     try:
         if not mt5.initialize():
-            logger.warning(f"MT5 initialization failed for {symbol}, using default pip value.")
             return 10.0
 
         symbol_info = mt5.symbol_info(symbol)
         if symbol_info is None:
-            logger.warning(f"Cannot retrieve symbol info for {symbol}, using default pip value.")
             return 10.0
 
         pip_value = symbol_info.point * symbol_info.trade_contract_size
-        logger.info(f"Pip value for {symbol}: {pip_value}")
         return pip_value
-    except Exception as e:
-        logger.error(f"Error retrieving pip value for {symbol}: {str(e)}")
+    except Exception:
         return 10.0
     finally:
         mt5.shutdown()

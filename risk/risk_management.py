@@ -74,9 +74,10 @@ class RiskManager:
     def calculate_var(self, returns: pd.Series, capital: float,
                       symbol: Optional[str] = None,
                       open_positions: Optional[Dict[str, int]] = None) -> float:
-        """Calculate Value at Risk (VaR) using VectorBT."""
+        """Calculate Value at Risk (VaR) using historical method."""
         if len(returns) < 10 or returns.empty:
-            logger.warning("No valid returns data for VaR calculation, returning default VaR")
+            logger.warning(
+                "No valid returns data for VaR calculation, returning default VaR")
             return 0.01
 
         cache_key = (tuple(returns.values), capital, symbol if symbol else "",
@@ -85,17 +86,20 @@ class RiskManager:
         if cache_key in self.var_cache:
             return self.var_cache[cache_key]
 
-        # Use VectorBT for portfolio returns
-        portfolio_returns = vbt.Returns.from_pandas(returns)
+        # In plaats van vbt.Returns.from_pandas, gebruiken we numpy direct
+        portfolio_returns = returns.values
+
         if symbol and open_positions and self.correlated_symbols:
             correlated = self.correlated_symbols.get(symbol, [])
             total_positions = sum(open_positions.values())
             if total_positions > 0:
                 weights = np.ones(len(correlated) + 1) / (len(correlated) + 1)
-                portfolio_returns = portfolio_returns.values * weights[0]
+                portfolio_returns = portfolio_returns * weights[0]
                 for i, corr_symbol in enumerate(correlated):
                     if corr_symbol in open_positions:
-                        portfolio_returns += portfolio_returns.values * weights[i + 1]
+                        portfolio_returns += portfolio_returns * weights[i + 1]
+
+        from scipy.stats import norm
 
         mean = np.mean(portfolio_returns)
         std_dev = np.std(portfolio_returns)
@@ -105,7 +109,6 @@ class RiskManager:
         self.var_cache[cache_key] = var
         logger.debug(f"Calculated VaR for {symbol}: {var:.2f}")
         return var
-
     def calculate_position_size(self, capital: float, returns: pd.Series,
                                 pip_value: float, symbol: Optional[str] = None,
                                 open_positions: Optional[Dict[str, int]] = None) -> float:
