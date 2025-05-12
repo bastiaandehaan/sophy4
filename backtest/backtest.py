@@ -63,12 +63,13 @@ def calculate_income_metrics(pf: vbt.Portfolio, metrics: Dict[str, Any], initial
     income_metrics['avg_monthly_profit'] = float(income_metrics['absolute_profit'] / months)
     return income_metrics
 
+
 def run_extended_backtest(strategy_name: str, parameters: Dict[str, Any], symbol: str,
                           timeframe: Optional[Union[str, int]] = None,
                           period_days: int = 1095,
                           initial_capital: float = INITIAL_CAPITAL,
-                          end_date: Optional[datetime] = None) -> Tuple[
-    Optional[vbt.Portfolio], Dict[str, Any]]:
+                          end_date: Optional[datetime] = None, silent: bool = False) -> \
+Tuple[Optional[vbt.Portfolio], Dict[str, Any]]:
     """
     Perform an extended backtest with VectorBT.
 
@@ -80,22 +81,33 @@ def run_extended_backtest(strategy_name: str, parameters: Dict[str, Any], symbol
         period_days: Number of days of historical data.
         initial_capital: Initial capital.
         end_date: End date for the test (default: now).
+        silent: If True, suppress console output.
 
     Returns:
         Tuple of (Portfolio object or None, dictionary with metrics).
     """
-    print(f"\n{'='*60}")
-    print(f"=== START BACKTEST: {strategy_name} on {symbol} ===")
-    print(f"{'='*60}")
+    if not silent:
+        print(f"\n{'=' * 60}")
+        print(f"=== START BACKTEST: {strategy_name} on {symbol} ===")
+        print(f"{'=' * 60}")
 
     output_path = Path(OUTPUT_DIR)
     output_path.mkdir(exist_ok=True, parents=True)
     timestamp = datetime.now().strftime("%Y%m%d")
 
-    logger.info(f"Starting backtest: {strategy_name} on {symbol} with {period_days} days data")
+    # Behoud logging maar onderdruk console output als silent=True
+    original_level = logger.level
+    if silent:
+        # Tijdelijk logger level aanpassen om console output te onderdrukken
+        import logging
+        logger.setLevel(logging.ERROR)
+    else:
+        logger.info(
+            f"Starting backtest: {strategy_name} on {symbol} with {period_days} days data")
 
     # Fetch data
-    df = fetch_historical_data(symbol, timeframe=timeframe, days=period_days, end_date=end_date)
+    df = fetch_historical_data(symbol, timeframe=timeframe, days=period_days,
+                               end_date=end_date)
     if df is None or df.empty:
         logger.error(f"No valid data for {symbol}")
         return None, {}
@@ -103,39 +115,30 @@ def run_extended_backtest(strategy_name: str, parameters: Dict[str, Any], symbol
     # Initialize RiskManager
     risk_manager = RiskManager(
         confidence_level=parameters.get('confidence_level', 0.95),
-        max_risk=parameters.get('risk_per_trade', 0.01)
-    )
+        max_risk=parameters.get('risk_per_trade', 0.01))
 
     # Calculate position size
     returns = df['close'].pct_change().dropna()
     symbol_info = risk_manager.get_symbol_info(symbol)
     pip_value = symbol_info["pip_value"] if symbol_info else 10.0
-    size = risk_manager.calculate_position_size(capital=initial_capital, returns=returns, pip_value=pip_value, symbol=symbol)
+    size = risk_manager.calculate_position_size(capital=initial_capital,
+                                                returns=returns, pip_value=pip_value,
+                                                symbol=symbol)
 
     # Generate signals
     strategy = get_strategy(strategy_name, **parameters)
     entries, sl_stop, tp_stop = strategy.generate_signals(df)
 
     # Map timeframe to freq
-    timeframe_to_freq = {
-        'M1': '1min', 'M5': '5min', 'M15': '15min', 'M30': '30min',
-        'H1': '1h', 'H4': '4h', 'D1': '1d', 'W1': '1w', 'MN1': '1M'
-    }
+    timeframe_to_freq = {'M1': '1min', 'M5': '5min', 'M15': '15min', 'M30': '30min',
+        'H1': '1h', 'H4': '4h', 'D1': '1d', 'W1': '1w', 'MN1': '1M'}
     freq = timeframe_to_freq.get(str(timeframe), '1d')
 
     # Create portfolio with VectorBT
-    portfolio_kwargs = {
-        'close': df['close'],
-        'entries': entries > 0,
-        'short_entries': entries < 0,
-        'sl_stop': sl_stop,
-        'tp_stop': tp_stop,
-        'init_cash': initial_capital,
-        'fees': FEES,
-        'freq': freq,
-        'size': size,
-        'size_type': 'amount'
-    }
+    portfolio_kwargs = {'close': df['close'], 'entries': entries > 0,
+        'short_entries': entries < 0, 'sl_stop': sl_stop, 'tp_stop': tp_stop,
+        'init_cash': initial_capital, 'fees': FEES, 'freq': freq, 'size': size,
+        'size_type': 'amount'}
     _calculate_stop(portfolio_kwargs, parameters)
 
     try:
@@ -158,35 +161,48 @@ def run_extended_backtest(strategy_name: str, parameters: Dict[str, Any], symbol
                    'profit_target_reached': profit_target}
 
     # Log results
-    logger.info(f"\n===== BACKTEST RESULTS FOR {strategy_name} ON {symbol} =====")
-    logger.info(f"Total Return: {float(metrics['total_return']):.2%}")
-    logger.info(f"Sharpe: {float(metrics['sharpe_ratio']):.2f}, Max Drawdown: {float(metrics['max_drawdown']):.2%}")
-    logger.info(f"Win Rate: {float(metrics['win_rate']):.2%}, Trades: {metrics['trades_count']}")
-    logger.info(f"FTMO Compliant: {'YES' if compliant else 'NO'}, Profit Target Reached: {'YES' if profit_target else 'NO'}")
+    if not silent:
+        logger.info(f"\n===== BACKTEST RESULTS FOR {strategy_name} ON {symbol} =====")
+        logger.info(f"Total Return: {float(metrics['total_return']):.2%}")
+        logger.info(
+            f"Sharpe: {float(metrics['sharpe_ratio']):.2f}, Max Drawdown: {float(metrics['max_drawdown']):.2%}")
+        logger.info(
+            f"Win Rate: {float(metrics['win_rate']):.2%}, Trades: {metrics['trades_count']}")
+        logger.info(
+            f"FTMO Compliant: {'YES' if compliant else 'NO'}, Profit Target Reached: {'YES' if profit_target else 'NO'}")
 
-    # Create visualizations
-    try:
-        pf.plot().show()
-        create_visualizations(pf, strategy_name, symbol, timeframe, output_path, timestamp)
-    except Exception as e:
-        logger.warning(f"Visualizations could not be created: {str(e)}")
+        # Create visualizations alleen als niet silent
+        try:
+            pf.plot().show()
+            create_visualizations(pf, strategy_name, symbol, timeframe, output_path,
+                                  timestamp)
+        except Exception as e:
+            logger.warning(f"Visualizations could not be created: {str(e)}")
 
-    # Save trades and results
-    timeframe_str = f"_{timeframe}" if timeframe else ""
-    if len(pf.trades) > 0:
-        pf.trades.records_readable.to_csv(
-            output_path / f"{strategy_name}_{symbol}{timeframe_str}_trades_{timestamp}.csv")
+        # Save trades and results (zelfs met silent, want dit beïnvloedt alleen console output)
+        timeframe_str = f"_{timeframe}" if timeframe else ""
+        if len(pf.trades) > 0:
+            pf.trades.records_readable.to_csv(
+                output_path / f"{strategy_name}_{symbol}{timeframe_str}_trades_{timestamp}.csv")
 
-    with open(output_path / f"{strategy_name}_{symbol}{timeframe_str}_results_{timestamp}.json", 'w') as f:
-        json.dump({'strategy': strategy_name, 'symbol': symbol, 'timeframe': str(timeframe),
-                   'metrics': all_metrics}, f, indent=2)
+        with open(
+                output_path / f"{strategy_name}_{symbol}{timeframe_str}_results_{timestamp}.json",
+                'w') as f:
+            json.dump({'strategy': strategy_name, 'symbol': symbol,
+                       'timeframe': str(timeframe), 'metrics': all_metrics}, f,
+                      indent=2)
 
-    print("\n=== BACKTEST RESULTS ===")
-    print(f"Total Return: {float(metrics['total_return']):.2%}")
-    print(f"Sharpe Ratio: {float(metrics['sharpe_ratio']):.2f}")
-    print(f"Max Drawdown: {float(metrics['max_drawdown']):.2%}")
-    print(f"Win Rate: {float(metrics['win_rate']):.2%}")
-    print(f"Number of Trades: {metrics['trades_count']}")
-    print(f"FTMO Compliant: {'YES' if compliant else 'NO'}")
+        # Print results naar console
+        print("\n=== BACKTEST RESULTS ===")
+        print(f"Total Return: {float(metrics['total_return']):.2%}")
+        print(f"Sharpe Ratio: {float(metrics['sharpe_ratio']):.2f}")
+        print(f"Max Drawdown: {float(metrics['max_drawdown']):.2%}")
+        print(f"Win Rate: {float(metrics['win_rate']):.2%}")
+        print(f"Number of Trades: {metrics['trades_count']}")
+        print(f"FTMO Compliant: {'YES' if compliant else 'NO'}")
+
+    # Herstel het oorspronkelijke logger level
+    if silent:
+        logger.setLevel(original_level)
 
     return pf, all_metrics
