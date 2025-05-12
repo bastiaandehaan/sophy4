@@ -22,6 +22,7 @@ class RiskManager:
         self.correlated_symbols = correlated_symbols or {}
         self.var_cache: Dict[Tuple, float] = {}
 
+    # Wijzig de functie get_symbol_info in risk/risk_management.py
     def get_symbol_info(self, symbol: str) -> Optional[Dict[str, float]]:
         """Retrieve symbol information via MT5 API."""
         try:
@@ -34,18 +35,20 @@ class RiskManager:
                 logger.warning(f"Cannot retrieve symbol info for {symbol}.")
                 return None
 
-            pip_value = symbol_info.point * symbol_info.trade_contract_size
+            # Gebruik getattr met een default waarde om de ontbrekende tick_size te omzeilen
+            tick_size = getattr(symbol_info, 'tick_size', 0.01)
+            pip_value = tick_size * symbol_info.trade_contract_size
             spread = symbol_info.spread * symbol_info.point
-            tick_value = symbol_info.trade_tick_value if hasattr(symbol_info, 'trade_tick_value') else 10.0
+            tick_value = getattr(symbol_info, 'trade_tick_value', 10.0)
 
             return {"pip_value": pip_value, "spread": spread, "tick_value": tick_value,
-                    "tick_size": symbol_info.tick_size, "contract_size": symbol_info.trade_contract_size}
+                    "tick_size": tick_size,
+                    "contract_size": symbol_info.trade_contract_size}
         except Exception as e:
             logger.error(f"Error retrieving symbol info for {symbol}: {str(e)}")
             return None
         finally:
             mt5.shutdown()
-
     def is_market_open(self, symbol: str) -> bool:
         """Check if the market is open for the given symbol."""
         try:
