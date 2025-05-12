@@ -75,15 +75,19 @@ def get_pip_value(symbol: str) -> float:
     """Retrieve pip value for a given symbol via MT5."""
     try:
         if not mt5.initialize():
+            logger.error("Failed to initialize MT5")
             return 10.0
 
         symbol_info = mt5.symbol_info(symbol)
         if symbol_info is None:
+            logger.error(f"Symbol {symbol} not found in MT5")
             return 10.0
 
-        pip_value = symbol_info.point * symbol_info.trade_contract_size
+        tick_size = getattr(symbol_info, 'tick_size', 0.1)  # Use getattr with a default
+        pip_value = tick_size * symbol_info.trade_contract_size
         return pip_value
-    except Exception:
+    except Exception as e:
+        logger.error(f"Error retrieving pip value for {symbol}: {e}")
         return 10.0
     finally:
         mt5.shutdown()

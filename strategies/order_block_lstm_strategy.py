@@ -4,8 +4,9 @@ from typing import Tuple, Dict, Any
 from datetime import datetime, timedelta
 import time
 import os
+import json
 
-# TensorFlow waarschuwingen onderdrukken
+# TensorFlow warnings suppression
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['PYTHONWARNINGS'] = 'ignore::DeprecationWarning,ignore::FutureWarning'
 
@@ -23,8 +24,7 @@ try:
     from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
     import keras_tuner as kt
 except ImportError:
-    print(
-        "TensorFlow or Keras Tuner not installed. Please run: pip install tensorflow keras-tuner")
+    print("TensorFlow or Keras Tuner not installed. Please run: pip install tensorflow keras-tuner")
     exit(1)
 
 import sys
@@ -34,7 +34,7 @@ import vectorbt as vbt
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import logger
 from strategies.base_strategy import BaseStrategy
-
+from strategies import register_strategy
 
 # Custom callback for trial progress
 class TrialProgressCallback(Callback):
@@ -49,9 +49,7 @@ class TrialProgressCallback(Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         epoch_time = time.time() - self.epoch_start_time
-        print(
-            f"   Trial {self.trial_num}/{self.total_trials} - Epoch {epoch + 1} completed in {epoch_time:.1f}s")
-
+        print(f"   Trial {self.trial_num}/{self.total_trials} - Epoch {epoch + 1} completed in {epoch_time:.1f}s")
 
 # Attention Layer for LSTM
 class AttentionLayer(Layer):
@@ -75,28 +73,16 @@ class AttentionLayer(Layer):
         context = tf.keras.backend.sum(context, axis=1)
         return context
 
-
 def prepare_data(df: pd.DataFrame, seq_len: int, target_column: str = 'close',
                  target_shift: int = 1, feature_columns: list = None) -> Tuple[
     np.ndarray, np.ndarray, MinMaxScaler]:
     """
     Prepare data for LSTM training with enhanced feature engineering.
-
-    Args:
-        df (pd.DataFrame): DataFrame with OHLC data.
-        seq_len (int): Length of the sequence for LSTM input.
-        target_column (str): Column to predict (default: 'close').
-        target_shift (int): How many periods ahead to predict (default: 1).
-        feature_columns (list): Columns to use as features (default: OHLC).
-
-    Returns:
-        Tuple[np.ndarray, np.ndarray, MinMaxScaler]: (X, y, scaler)
     """
     if feature_columns is None:
         feature_columns = ['open', 'high', 'low', 'close']
 
-    required_columns = feature_columns + [
-        target_column] if target_column not in feature_columns else feature_columns
+    required_columns = feature_columns + [target_column] if target_column not in feature_columns else feature_columns
     if not all(col in df.columns for col in required_columns):
         raise ValueError(f"DataFrame missing required columns: {required_columns}")
 
@@ -113,18 +99,14 @@ def prepare_data(df: pd.DataFrame, seq_len: int, target_column: str = 'close',
     df['macd'] = macd.macd
     df['macd_signal'] = macd.signal
 
-    # Orderblock specifieke features (MQL5 artikel gebaseerd)
+    # Orderblock specific features
     df['price_movement'] = df['close'] - df['open']
     df['candle_range'] = df['high'] - df['low']
-    df['volume_ma'] = df['tick_volume'].rolling(
-        window=20).mean() if 'tick_volume' in df.columns else df[
-        'candle_range'].rolling(window=20).mean()
-    df['volume_ratio'] = df['tick_volume'] / df[
-        'volume_ma'] if 'tick_volume' in df.columns else df['candle_range'] / df[
-        'candle_range'].rolling(window=20).mean()
+    df['volume_ma'] = df['tick_volume'].rolling(window=20).mean() if 'tick_volume' in df.columns else df['candle_range'].rolling(window=20).mean()
+    df['volume_ratio'] = df['tick_volume'] / df['volume_ma'] if 'tick_volume' in df.columns else df['candle_range'] / df['candle_range'].rolling(window=20).mean()
     df['price_position'] = (df['close'] - df['low']) / (df['high'] - df['low'])
 
-    # Trend indicatoren
+    # Trend indicators
     df['sma200'] = vbt.MA.run(df['close'], window=200).ma
     df['trend'] = (df['close'] > df['sma200']).astype(float)
 
@@ -159,16 +141,14 @@ def prepare_data(df: pd.DataFrame, seq_len: int, target_column: str = 'close',
 
     return np.array(X), np.array(y), scaler
 
-
 def build_lstm_model(hp, seq_len: int, n_features: int) -> Sequential:
     """
     Build and compile an LSTM model with attention mechanism and hyperparameter tuning.
-    Optimized for OrderBlock detection & prediction.
     """
     model = Sequential()
     model.add(Input(shape=(seq_len, n_features)))
 
-    # LSTM layers with optimized units for order blocks
+    # LSTM layers
     lstm_units = hp.Int('lstm_units', min_value=64, max_value=256, step=64)
     model.add(LSTM(units=lstm_units, return_sequences=True))
     model.add(Dropout(hp.Float('dropout_1', min_value=0.2, max_value=0.5, step=0.1)))
@@ -184,15 +164,12 @@ def build_lstm_model(hp, seq_len: int, n_features: int) -> Sequential:
     model.add(Dense(1))
 
     # Compile with optimized learning rate
-    learning_rate = hp.Float('learning_rate', min_value=5e-5, max_value=5e-3,
-                             sampling='LOG')
+    learning_rate = hp.Float('learning_rate', min_value=5e-5, max_value=5e-3, sampling='LOG')
     model.compile(optimizer=Adam(learning_rate=learning_rate), loss='mse')
     return model
 
-
 def evaluate_model(model, X_test: np.ndarray, y_test: np.ndarray, scaler,
-                   feature_columns: list, results_dir: str, symbol: str) -> Dict[
-    str, float]:
+                   feature_columns: list, results_dir: str, symbol: str) -> Dict[str, float]:
     """
     Evaluate model and create performance visualizations.
     """
@@ -220,7 +197,6 @@ def evaluate_model(model, X_test: np.ndarray, y_test: np.ndarray, scaler,
 
     return {'mse': mse, 'rmse': rmse, 'mae': mae, 'correlation': corr,
             'directional_accuracy': directional_accuracy}
-
 
 def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
                          output_dir: str, epochs: int = 100, batch_size: int = 32,
@@ -251,8 +227,7 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
 
     # Fetch historical data
     print("📥 Fetching historical data...")
-    df = BaseStrategy.fetch_historical_data(symbol=symbol, timeframe=timeframe,
-                                            days=days)
+    df = BaseStrategy.fetch_historical_data(symbol=symbol, timeframe=timeframe, days=days)
     if df is None or df.empty:
         logger.error(f"Failed to fetch historical data for {symbol} on {timeframe}")
         return {"success": False, "error": "Failed to fetch data"}
@@ -278,14 +253,12 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
     print(f"✓ Data split: {len(X_train)} training samples, {len(X_test)} test samples")
 
     # Create TensorFlow dataset for efficient training
-    train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train)).batch(
-        batch_size).prefetch(tf.data.AUTOTUNE)
-    test_dataset = tf.data.Dataset.from_tensor_slices((X_test, y_test)).batch(
-        batch_size).prefetch(tf.data.AUTOTUNE)
+    train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train)).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    test_dataset = tf.data.Dataset.from_tensor_slices((X_test, y_test)).batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
     # Hyperparameter tuning with Keras Tuner
     print("\n🔍 Starting hyperparameter search...")
-    total_trials = 5  # Reduced from 10 to 5 for faster results
+    total_trials = 5
     trial_times = []
 
     tuner = kt.Hyperband(lambda hp: build_lstm_model(hp, seq_len, X.shape[2]),
@@ -302,8 +275,7 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
 
     # Search for best hyperparameters with progress tracking
     print(f"\n📊 Running {total_trials} trials for hyperparameter optimization")
-    print(
-        f"Estimated completion time: {int(total_trials * 3)} - {int(total_trials * 6)} minutes\n")
+    print(f"Estimated completion time: {int(total_trials * 3)} - {int(total_trials * 6)} minutes\n")
 
     trial_start_time = time.time()
 
@@ -326,8 +298,7 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
             eta_seconds = remaining_trials * avg_trial_time
             eta_time = datetime.now() + timedelta(seconds=eta_seconds)
 
-            pbar.set_postfix_str(
-                f"Trial time: {trial_duration:.1f}s | ETA: {eta_time.strftime('%H:%M:%S')}")
+            pbar.set_postfix_str(f"Trial time: {trial_duration:.1f}s | ETA: {eta_time.strftime('%H:%M:%S')}")
             pbar.update(1)
 
             trial_start_time = time.time()
@@ -335,8 +306,7 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
 
         tuner.on_trial_end = on_trial_end_wrapper
 
-        tuner.search(train_dataset, validation_data=test_dataset, callbacks=callbacks,
-                     verbose=0)  # Set to 0 to minimize console output
+        tuner.search(train_dataset, validation_data=test_dataset, callbacks=callbacks, verbose=0)
 
     # Get the best model
     print("\n🏆 Retrieving best model...")
@@ -375,51 +345,173 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
     print(f"Model Path: {model_path}")
     print(f"{'=' * 60}\n")
 
-    # Maak optimale parameterinstellingen
-    optimal_params = {"ob_lookback": 20, "ob_strength": 2.0, "lstm_threshold": 0.4,
-        "sl_fixed_percent": 0.02, "tp_fixed_percent": 0.045, "use_trailing_stop": True,
-        "trailing_stop_percent": 0.01, "risk_per_trade": 0.0075}
+    # Save optimal parameter settings
+    optimal_params = {
+        "ob_lookback": 20,
+        "ob_strength": 2.0,
+        "lstm_threshold": 0.4,
+        "sl_fixed_percent": 0.02,
+        "tp_fixed_percent": 0.045,
+        "use_trailing_stop": True,
+        "trailing_stop_percent": 0.01,
+        "risk_per_trade": 0.0075
+    }
 
     params_path = Path("order_block_params.json")
-    import json
     with open(params_path, "w") as f:
         json.dump(optimal_params, f, indent=2)
 
-    print(f"✅ Optimale strategie parameters opgeslagen in {params_path}")
-    print(
-        f"Run: python main.py backtest run OrderBlockLSTMStrategy --symbol {symbol} --timeframe {timeframe} --params order_block_params.json")
+    print(f"✅ Optimal strategy parameters saved to {params_path}")
+    print(f"Run: python main.py backtest run OrderBlockLSTMStrategy --symbol {symbol} --timeframe {timeframe} --params order_block_params.json")
 
-    return {"success": True, "model_path": str(model_path), "metrics": metrics,
-            "data_points": len(df), "sequence_length": seq_len}
+    return {
+        "success": True,
+        "model_path": str(model_path),
+        "metrics": metrics,
+        "data_points": len(df),
+        "sequence_length": seq_len
+    }
 
+@register_strategy
+class OrderBlockLSTMStrategy(BaseStrategy):
+    """
+    A trading strategy that combines order block detection with LSTM predictions.
+    """
+    def __init__(self, params: Dict[str, Any] = None):
+        super().__init__()
+        # Default parameters
+        self.params = {
+            "symbol": "GER40.cash",
+            "ob_lookback": 20,
+            "ob_strength": 2.0,
+            "lstm_threshold": 0.4,
+            "sl_fixed_percent": 0.02,
+            "tp_fixed_percent": 0.045,
+            "use_trailing_stop": True,
+            "trailing_stop_percent": 0.01,
+            "risk_per_trade": 0.0075
+        }
+        if params:
+            self.params.update(params)
+
+        self.seq_len = 50  # Must match the sequence length used during training
+        self.model = None
+        self.scaler = None
+        self.feature_columns = ['open', 'high', 'low', 'close', 'tick_volume']
+
+        # Load the trained LSTM model
+        model_path = Path(f"./trainedh5/lstm_{self.params['symbol']}_{self.params.get('timeframe', 'H1')}.h5")
+        if model_path.exists():
+            self.model = load_model(model_path, custom_objects={'AttentionLayer': AttentionLayer})
+            print(f"Loaded LSTM model from {model_path}")
+        else:
+            raise FileNotFoundError(f"LSTM model not found at {model_path}. Please train the model first.")
+
+    def detect_order_block(self, df: pd.DataFrame) -> pd.Series:
+        """
+        Detect order blocks based on price action and volume.
+        Returns a Series with 1 for bullish order blocks, -1 for bearish, and 0 otherwise.
+        """
+        ob_lookback = self.params.get('ob_lookback', 20)
+        ob_strength = self.params.get('ob_strength', 2.0)
+
+        signals = pd.Series(0, index=df.index)
+
+        for i in range(ob_lookback, len(df)):
+            window = df.iloc[i - ob_lookback:i]
+            current_candle = df.iloc[i]
+
+            # Calculate volume and range metrics
+            avg_volume = window['tick_volume'].mean() if 'tick_volume' in window.columns else window['high'].mean() - window['low'].mean()
+            avg_range = (window['high'] - window['low']).mean()
+
+            # Bullish order block: strong upward move with high volume
+            if (current_candle['close'] > current_candle['open'] and
+                (current_candle['close'] - current_candle['open']) > avg_range * ob_strength and
+                ('tick_volume' not in df.columns or current_candle['tick_volume'] > avg_volume * ob_strength)):
+                signals.iloc[i] = 1
+
+            # Bearish order block: strong downward move with high volume
+            elif (current_candle['close'] < current_candle['open'] and
+                  (current_candle['open'] - current_candle['close']) > avg_range * ob_strength and
+                  ('tick_volume' not in df.columns or current_candle['tick_volume'] > avg_volume * ob_strength)):
+                signals.iloc[i] = -1
+
+        return signals
+
+    def generate_signals(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Generate trading signals using order block detection and LSTM predictions.
+        """
+        # Prepare data for LSTM
+        df_copy = df.copy()
+        X, _, self.scaler = prepare_data(df_copy, self.seq_len, feature_columns=self.feature_columns)
+
+        # Generate LSTM predictions
+        predictions = []
+        for i in range(len(X)):
+            x_input = X[i:i+1]
+            pred = self.model.predict(x_input, verbose=0)
+            predictions.append(pred[0, 0])
+        predictions = np.array(predictions)
+
+        # Align predictions with DataFrame
+        df_copy = df_copy.iloc[self.seq_len:len(predictions) + self.seq_len].copy()
+        df_copy['lstm_pred'] = predictions
+
+        # Detect order blocks
+        ob_signals = self.detect_order_block(df_copy)
+
+        # Generate final signals
+        signals = pd.DataFrame(index=df_copy.index)
+        signals['entry'] = 0  # 1 for long, -1 for short, 0 for no entry
+        signals['exit'] = 0   # 1 for exit, 0 for no exit
+
+        lstm_threshold = self.params.get('lstm_threshold', 0.4)
+
+        for i in range(1, len(df_copy)):
+            # Bullish order block with positive LSTM prediction
+            if (ob_signals.iloc[i] == 1 and
+                df_copy['lstm_pred'].iloc[i] > df_copy['close'].iloc[i] * (1 + lstm_threshold)):
+                signals['entry'].iloc[i] = 1
+
+            # Bearish order block with negative LSTM prediction
+            elif (ob_signals.iloc[i] == -1 and
+                  df_copy['lstm_pred'].iloc[i] < df_copy['close'].iloc[i] * (1 - lstm_threshold)):
+                signals['entry'].iloc[i] = -1
+
+            # Exit logic (simplified for now, can be enhanced)
+            if signals['entry'].iloc[i-1] != 0:  # If in a position
+                if signals['entry'].iloc[i-1] == 1 and df_copy['close'].iloc[i] < df_copy['close'].iloc[i-1]:
+                    signals['exit'].iloc[i] = 1
+                elif signals['entry'].iloc[i-1] == -1 and df_copy['close'].iloc[i] > df_copy['close'].iloc[i-1]:
+                    signals['exit'].iloc[i] = 1
+
+        return signals
 
 def main() -> None:
     """Main function to train LSTM model for OrderBlockLSTMStrategy."""
-    parser = argparse.ArgumentParser(
-        description="Train LSTM model for OrderBlockLSTMStrategy")
-    parser.add_argument("--symbol", type=str, default="GER40.cash",
-                        help="Trading symbol (e.g., GER40.cash)")
-    parser.add_argument("--timeframe", type=str, default="H1",
-                        help="Timeframe (e.g., H1)")
-    parser.add_argument("--days", type=int, default=1095,
-                        help="Number of days of historical data")
-    parser.add_argument("--seq_len", type=int, default=50,
-                        help="Sequence length for LSTM")
-    parser.add_argument("--output", type=str, default=".",
-                        help="Output directory for the model")
-    parser.add_argument("--epochs", type=int, default=100,
-                        help="Number of training epochs")
-    parser.add_argument("--batch_size", type=int, default=32,
-                        help="Batch size for training")
-    parser.add_argument("--verbose", type=int, default=0,
-                        help="Verbosity level (0=silent, 1=progress, 2=detailed)")
+    parser = argparse.ArgumentParser(description="Train LSTM model for OrderBlockLSTMStrategy")
+    parser.add_argument("--symbol", type=str, default="GER40.cash", help="Trading symbol (e.g., GER40.cash)")
+    parser.add_argument("--timeframe", type=str, default="H1", help="Timeframe (e.g., H1)")
+    parser.add_argument("--days", type=int, default=1095, help="Number of days of historical data")
+    parser.add_argument("--seq_len", type=int, default=50, help="Sequence length for LSTM")
+    parser.add_argument("--output", type=str, default=".", help="Output directory for the model")
+    parser.add_argument("--epochs", type=int, default=100, help="Number of training epochs")
+    parser.add_argument("--batch_size", type=int, default=32, help="Batch size for training")
+    parser.add_argument("--verbose", type=int, default=0, help="Verbosity level (0=silent, 1=progress, 2=detailed)")
     args = parser.parse_args()
 
-    train_and_save_model(symbol=args.symbol, timeframe=args.timeframe, days=args.days,
-                         seq_len=args.seq_len, output_dir=args.output,
-                         epochs=args.epochs, batch_size=args.batch_size,
-                         verbose=args.verbose)
-
+    train_and_save_model(
+        symbol=args.symbol,
+        timeframe=args.timeframe,
+        days=args.days,
+        seq_len=args.seq_len,
+        output_dir=args.output,
+        epochs=args.epochs,
+        batch_size=args.batch_size,
+        verbose=args.verbose
+    )
 
 if __name__ == "__main__":
     main()

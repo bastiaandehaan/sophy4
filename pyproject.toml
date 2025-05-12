@@ -20,6 +20,7 @@ dependencies = [
     "tensorflow>=2.19.0",
     "scikit-learn>=1.6.1",
     "pydantic>=2.0.0",
+    "psutil>=7.0.0",  # Added for resource monitoring
 ]
 
 [project.scripts]

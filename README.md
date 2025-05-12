@@ -1,83 +1,59 @@
-# Sophy4 Trading Framework
-
+Sophy4 Trading Framework
 A modular trading framework for backtesting, live trading, risk management, monitoring, and FTMO compliance.
+Structure
 
-## Structure
+backtest/: Backtesting logic
+live/: Live trading execution
+risk/: Risk management tools
+monitor/: Performance monitoring
+ftmo_compliance/: FTMO rule checker
+strategies/: Trading strategies (e.g., Bollong)
+utils/: Helper functions
+results/: Output directory
 
-- **backtest/**: Backtesting logic
-- **live/**: Live trading execution
-- **risk/**: Risk management tools
-- **monitor/**: Performance monitoring
-- **ftmo_compliance/**: FTMO rule checker
-- **strategies/**: Trading strategies (e.g., bollong)
-- **utils/**: Helper functions
-- **results/**: Output directory
+Installation
 
-## Installation
+Install dependencies:
+pip install -e .
 
-1. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
 
-2. Run a backtest:
-   ```
-   python main.py --mode backtest --strategy BollongStrategy --symbol GER40.cash
-   ```
+Run a backtest:
+python main.py backtest run BollongStrategy --symbol GER40.cash --timeframe H1 --days 1095
 
-3. Run live trading (when available):
-   ```
-   python main.py --mode live --strategy BollongStrategy --symbol GER40.cash
-   ```
 
-## Available Strategies
+Run live trading (when available):
+python main.py monitor live --symbols GER40.cash
 
-- **BollongStrategy**: A long-only Bollinger Bands breakout strategy.
 
-## Configuratie
 
-Edit configuration settings in `config.py` including:
-- Initial capital
-- Risk parameters
-- FTMO compliance settings
+Available Strategies
 
-## Documentation
+BollongStrategy: A long-only Bollinger Bands breakout strategy.
 
-For more detailed information, please refer to the `user_manual.md` which contains comprehensive documentation about:
-- System architecture
-- Module descriptions
-- Creating custom strategies
-- Risk management features
-- Performance monitoring
+Configuration
+Configuration settings can be adjusted in config.py, including:
 
-## Requirements
+Initial capital
+Risk management parameters
+FTMO compliance settings
+Timeframe settings in timeframe_config.json
 
-See `requirements.txt` for a complete list of dependencies. Key packages include:
-- VectorBT 0.27.2
-- Pandas 2.2.3
-- NumPy 2.1.3
-- MetaTrader5 5.0.4874
-## Beschikbare Strategieën
+Documentation
+For more detailed information, please refer to the user_manual.md which contains comprehensive documentation about:
 
-- **BollongStrategy**: Een long-only Bollinger Bands uitbraakstrategie.
+System architecture
+Module descriptions
+Creating custom strategies
+Risk management features
+Performance monitoring
 
-## Configuratie
+Requirements
+See pyproject.toml for a complete list of dependencies. Key packages include:
 
-Configuratie-instellingen kunnen worden aangepast in `config.py`, waaronder:
-- Initieel kapitaal
-- Risicobeheersparameters
-- FTMO-compliance-instellingen
-- Tijdsframe-instellingen in `timeframe_config.json`
+VectorBT 0.27.2+
+Pandas 2.2.3+
+NumPy 2.1.3+
+MetaTrader5 5.0.4874+
 
-## Documentatie
-
-Voor meer gedetailleerde informatie, raadpleeg `docs/` en de `user_manual.md`, met uitgebreide documentatie over:
-- Systeemarchitectuur
-- Modulebeschrijvingen
-- Maken van aangepaste strategieën
-- Risicobeheersfuncties
-- Prestatiemonitoring
-
-## Bijdragen
-
-Bijdragen zijn welkom! Voel vrij om een pull request in te dienen of issues te melden.
+Contributing
+Contributions are welcome! Feel free to submit a pull request or report issues.

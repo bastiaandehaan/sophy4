@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import Tuple, Dict, Any
 from datetime import datetime, timedelta
 import time
+import os
+import psutil  # For resource monitoring
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -18,20 +20,17 @@ try:
     from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, Callback
     import keras_tuner as kt
 except ImportError:
-    print(
-        "TensorFlow or Keras Tuner not installed. Please run: pip install tensorflow keras-tuner")
+    print("TensorFlow or Keras Tuner not installed. Please run: pip install tensorflow keras-tuner")
     exit(1)
 
 import sys
-import os
 import vectorbt as vbt
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from config import logger
 from strategies.base_strategy import BaseStrategy
 
-
-# Custom callback for trial progress
+# Custom callback for trial progress and resource monitoring
 class TrialProgressCallback(Callback):
     def __init__(self, trial_num, total_trials):
         super().__init__()
@@ -44,9 +43,12 @@ class TrialProgressCallback(Callback):
 
     def on_epoch_end(self, epoch, logs=None):
         epoch_time = time.time() - self.epoch_start_time
-        print(
-            f"   Trial {self.trial_num}/{self.total_trials} - Epoch {epoch + 1} completed in {epoch_time:.1f}s")
-
+        # Monitor CPU and memory usage
+        cpu_usage = psutil.cpu_percent(interval=None)
+        memory_info = psutil.virtual_memory()
+        memory_usage = memory_info.percent
+        print(f"   Trial {self.trial_num}/{self.total_trials} - Epoch {epoch + 1} completed in {epoch_time:.1f}s")
+        print(f"   CPU Usage: {cpu_usage:.1f}% | Memory Usage: {memory_usage:.1f}%")
 
 # Attention Layer for LSTM
 class AttentionLayer(Layer):
@@ -70,32 +72,20 @@ class AttentionLayer(Layer):
         context = tf.keras.backend.sum(context, axis=1)
         return context
 
-
 def prepare_data(df: pd.DataFrame, seq_len: int, target_column: str = 'close',
                  target_shift: int = 1, feature_columns: list = None) -> Tuple[
     np.ndarray, np.ndarray, MinMaxScaler]:
     """
     Prepare data for LSTM training with enhanced feature engineering.
-
-    Args:
-        df (pd.DataFrame): DataFrame with OHLC data.
-        seq_len (int): Length of the sequence for LSTM input.
-        target_column (str): Column to predict (default: 'close').
-        target_shift (int): How many periods ahead to predict (default: 1).
-        feature_columns (list): Columns to use as features (default: OHLC).
-
-    Returns:
-        Tuple[np.ndarray, np.ndarray, MinMaxScaler]: (X, y, scaler)
     """
     if feature_columns is None:
         feature_columns = ['open', 'high', 'low', 'close']
 
-    required_columns = feature_columns + [
-        target_column] if target_column not in feature_columns else feature_columns
+    required_columns = feature_columns + [target_column] if target_column not in feature_columns else feature_columns
     if not all(col in df.columns for col in required_columns):
         raise ValueError(f"DataFrame missing required columns: {required_columns}")
 
-    # Enhanced Feature Engineering with VectorBT
+    # Enhanced Feature Engineering with VectorBT (matching OrderBlockLSTMStrategy)
     print("🔧 Calculating technical indicators...")
     df['ma20'] = vbt.MA.run(df['close'], window=20).ma
     df['ma50'] = vbt.MA.run(df['close'], window=50).ma
@@ -108,15 +98,25 @@ def prepare_data(df: pd.DataFrame, seq_len: int, target_column: str = 'close',
     df['macd'] = macd.macd
     df['macd_signal'] = macd.signal
 
+    # Orderblock-specific features (to match OrderBlockLSTMStrategy)
+    df['price_movement'] = df['close'] - df['open']
+    df['candle_range'] = df['high'] - df['low']
+    df['volume_ma'] = df['tick_volume'].rolling(window=20).mean() if 'tick_volume' in df.columns else df['candle_range'].rolling(window=20).mean()
+    df['volume_ratio'] = df['tick_volume'] / df['volume_ma'] if 'tick_volume' in df.columns else df['candle_range'] / df['candle_range'].rolling(window=20).mean()
+    df['price_position'] = (df['close'] - df['low']) / (df['high'] - df['low'])
+    df['sma200'] = vbt.MA.run(df['close'], window=200).ma
+    df['trend'] = (df['close'] > df['sma200']).astype(float)
+
     # Add features to feature_columns
     enhanced_features = feature_columns.copy()
     for indicator in ['ma20', 'ma50', 'rsi', 'atr', 'bb_upper', 'bb_lower', 'macd',
-                      'macd_signal']:
+                      'macd_signal', 'price_movement', 'candle_range', 'volume_ratio',
+                      'price_position', 'trend']:
         if indicator not in enhanced_features:
             enhanced_features.append(indicator)
 
     # Fill missing values
-    df = df.fillna(method='bfill')
+    df = df.ffill()  # Fixed to use ffill() instead of deprecated method
 
     # Normalize features
     print("📊 Normalizing data...")
@@ -138,52 +138,37 @@ def prepare_data(df: pd.DataFrame, seq_len: int, target_column: str = 'close',
 
     return np.array(X), np.array(y), scaler
 
-
 def build_lstm_model(hp, seq_len: int, n_features: int) -> Sequential:
     """
     Build and compile an LSTM model with attention mechanism and hyperparameter tuning.
-
-    Args:
-        hp (HyperParameters): Keras Tuner hyperparameters.
-        seq_len (int): Length of the sequence.
-        n_features (int): Number of features.
-
-    Returns:
-        Sequential: Compiled LSTM model.
     """
     model = Sequential()
     model.add(Input(shape=(seq_len, n_features)))
 
-    # LSTM layers with tunable units
-    lstm_units = hp.Int('lstm_units', min_value=32, max_value=128, step=32)
+    # Reduced LSTM layers for efficiency
+    lstm_units = hp.Int('lstm_units', min_value=32, max_value=64, step=16)  # Reduced range
     model.add(LSTM(units=lstm_units, return_sequences=True))
-    model.add(Dropout(hp.Float('dropout_1', min_value=0.1, max_value=0.5, step=0.1)))
+    model.add(Dropout(hp.Float('dropout_1', min_value=0.1, max_value=0.3, step=0.1)))
     model.add(LSTM(units=lstm_units // 2, return_sequences=True))
-    model.add(Dropout(hp.Float('dropout_2', min_value=0.1, max_value=0.5, step=0.1)))
+    model.add(Dropout(hp.Float('dropout_2', min_value=0.1, max_value=0.3, step=0.1)))
 
     # Attention mechanism
     model.add(AttentionLayer())
 
     # Dense layers
-    model.add(Dense(units=hp.Int('dense_units', min_value=16, max_value=64, step=16),
+    model.add(Dense(units=hp.Int('dense_units', min_value=16, max_value=32, step=8),  # Reduced range
                     activation='relu'))
     model.add(Dense(1))
 
     # Compile with tunable learning rate
-    learning_rate = hp.Float('learning_rate', min_value=1e-4, max_value=1e-2,
-                             sampling='LOG')
+    learning_rate = hp.Float('learning_rate', min_value=1e-4, max_value=1e-3, sampling='LOG')  # Reduced range
     model.compile(optimizer=Adam(learning_rate=learning_rate), loss='mse')
     return model
 
-
 def evaluate_model(model, X_test: np.ndarray, y_test: np.ndarray, scaler,
-                   feature_columns: list, results_dir: str, symbol: str) -> Dict[
-    str, float]:
+                   feature_columns: list, results_dir: str, symbol: str) -> Dict[str, float]:
     """
     Evaluate model and create performance visualizations.
-
-    Returns:
-        Dict with evaluation metrics.
     """
     print("📈 Evaluating model performance...")
     predictions = model.predict(X_test, verbose=0)
@@ -210,25 +195,11 @@ def evaluate_model(model, X_test: np.ndarray, y_test: np.ndarray, scaler,
     return {'mse': mse, 'rmse': rmse, 'mae': mae, 'correlation': corr,
             'directional_accuracy': directional_accuracy}
 
-
 def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
-                         output_dir: str, epochs: int = 50, batch_size: int = 32,
+                         output_dir: str, epochs: int = 30, batch_size: int = 64,  # Adjusted defaults
                          verbose: int = 1) -> Dict[str, Any]:
     """
     Train an LSTM model with hyperparameter tuning and attention mechanism.
-
-    Args:
-        symbol (str): Trading symbol (e.g., 'XAUUSD').
-        timeframe (str): Timeframe (e.g., 'H1').
-        days (int): Number of days of historical data.
-        seq_len (int): Sequence length for LSTM.
-        output_dir (str): Directory to save the trained model.
-        epochs (int): Number of training epochs.
-        batch_size (int): Batch size for training.
-        verbose (int): Verbosity level for training.
-
-    Returns:
-        Dict with training results.
     """
     training_start_time = time.time()
 
@@ -253,8 +224,7 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
 
     # Fetch historical data
     print("📥 Fetching historical data...")
-    df = BaseStrategy.fetch_historical_data(symbol=symbol, timeframe=timeframe,
-                                            days=days)
+    df = BaseStrategy.fetch_historical_data(symbol=symbol, timeframe=timeframe, days=days)
     if df is None or df.empty:
         logger.error(f"Failed to fetch historical data for {symbol} on {timeframe}")
         return {"success": False, "error": "Failed to fetch data"}
@@ -280,14 +250,12 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
     print(f"✓ Data split: {len(X_train)} training samples, {len(X_test)} test samples")
 
     # Create TensorFlow dataset for efficient training
-    train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train)).batch(
-        batch_size).prefetch(tf.data.AUTOTUNE)
-    test_dataset = tf.data.Dataset.from_tensor_slices((X_test, y_test)).batch(
-        batch_size).prefetch(tf.data.AUTOTUNE)
+    train_dataset = tf.data.Dataset.from_tensor_slices((X_train, y_train)).batch(batch_size).prefetch(tf.data.AUTOTUNE)
+    test_dataset = tf.data.Dataset.from_tensor_slices((X_test, y_test)).batch(batch_size).prefetch(tf.data.AUTOTUNE)
 
     # Hyperparameter tuning with Keras Tuner
     print("\n🔍 Starting hyperparameter search...")
-    total_trials = 10
+    total_trials = 3  # Reduced number of trials
     trial_times = []
 
     tuner = kt.Hyperband(lambda hp: build_lstm_model(hp, seq_len, X.shape[2]),
@@ -297,15 +265,16 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
 
     # Callbacks
     callbacks = [
-        EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
+        EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True),  # Reduced patience
         ModelCheckpoint(
             filepath=str(model_dir / f"lstm_{symbol}_{timeframe}_checkpoint.h5"),
-            save_best_only=True, monitor='val_loss')]
+            save_best_only=True, monitor='val_loss'),
+        TrialProgressCallback(trial_num=1, total_trials=total_trials)  # Add resource monitoring
+    ]
 
     # Search for best hyperparameters with progress tracking
     print(f"\n📊 Running {total_trials} trials for hyperparameter optimization")
-    print(
-        f"Estimated completion time: {int(total_trials * 2)} - {int(total_trials * 5)} minutes\n")
+    print(f"Estimated completion time: {int(total_trials * 1)} - {int(total_trials * 3)} minutes\n")
 
     trial_start_time = time.time()
 
@@ -328,8 +297,7 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
             eta_seconds = remaining_trials * avg_trial_time
             eta_time = datetime.now() + timedelta(seconds=eta_seconds)
 
-            pbar.set_postfix_str(
-                f"Trial time: {trial_duration:.1f}s | ETA: {eta_time.strftime('%H:%M:%S')}")
+            pbar.set_postfix_str(f"Trial time: {trial_duration:.1f}s | ETA: {eta_time.strftime('%H:%M:%S')}")
             pbar.update(1)
 
             trial_start_time = time.time()
@@ -337,8 +305,7 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
 
         tuner.on_trial_end = on_trial_end_wrapper
 
-        tuner.search(train_dataset, validation_data=test_dataset, callbacks=callbacks,
-                     verbose=verbose)
+        tuner.search(train_dataset, validation_data=test_dataset, callbacks=callbacks, verbose=verbose)
 
     # Get the best model
     print("\n🏆 Retrieving best model...")
@@ -380,34 +347,23 @@ def train_and_save_model(symbol: str, timeframe: str, days: int, seq_len: int,
     return {"success": True, "model_path": str(model_path), "metrics": metrics,
             "data_points": len(df), "sequence_length": seq_len}
 
-
 def main() -> None:
     """Main function to train LSTM model from command line arguments."""
-    parser = argparse.ArgumentParser(
-        description="Train LSTM model for trading strategy")
-    parser.add_argument("--symbol", type=str, required=True,
-                        help="Trading symbol (e.g., XAUUSD)")
-    parser.add_argument("--timeframe", type=str, default="H1",
-                        help="Timeframe (e.g., H1)")
-    parser.add_argument("--days", type=int, default=500,
-                        help="Number of days of historical data")
-    parser.add_argument("--seq_len", type=int, default=50,
-                        help="Sequence length for LSTM")
-    parser.add_argument("--output", type=str, default="trainedh5",
-                        help="Output directory for the model")
-    parser.add_argument("--epochs", type=int, default=50,
-                        help="Number of training epochs")
-    parser.add_argument("--batch_size", type=int, default=32,
-                        help="Batch size for training")
-    parser.add_argument("--verbose", type=int, default=1,
-                        help="Verbosity level (0=silent, 1=progress, 2=detailed)")
+    parser = argparse.ArgumentParser(description="Train LSTM model for trading strategy")
+    parser.add_argument("--symbol", type=str, required=True, help="Trading symbol (e.g., XAUUSD)")
+    parser.add_argument("--timeframe", type=str, default="H1", help="Timeframe (e.g., H1)")
+    parser.add_argument("--days", type=int, default=500, help="Number of days of historical data")
+    parser.add_argument("--seq_len", type=int, default=50, help="Sequence length for LSTM")
+    parser.add_argument("--output", type=str, default=".", help="Output directory for the model")
+    parser.add_argument("--epochs", type=int, default=30, help="Number of training epochs")
+    parser.add_argument("--batch_size", type=int, default=64, help="Batch size for training")
+    parser.add_argument("--verbose", type=int, default=1, help="Verbosity level (0=silent, 1=progress, 2=detailed)")
     args = parser.parse_args()
 
     train_and_save_model(symbol=args.symbol, timeframe=args.timeframe, days=args.days,
                          seq_len=args.seq_len, output_dir=args.output,
                          epochs=args.epochs, batch_size=args.batch_size,
                          verbose=args.verbose)
-
 
 if __name__ == "__main__":
     main()
