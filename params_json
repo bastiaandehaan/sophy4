@@ -1,0 +1,9 @@
+[
+    {
+        "params": {
+            "ob_lookback": 5,
+            "sl_percent": 0.01,
+            "tp_percent": 0.03
+        }
+    }
+]

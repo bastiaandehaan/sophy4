@@ -14,7 +14,9 @@ from risk.risk_management import RiskManager
 from strategies import get_strategy
 from utils.plotting import create_visualizations
 
-def _calculate_stop(portfolio_kwargs: Dict[str, Any], parameters: Dict[str, Any]) -> None:
+
+def _calculate_stop(portfolio_kwargs: Dict[str, Any],
+                    parameters: Dict[str, Any]) -> None:
     """Calculate stop losses and trailing stops."""
     if parameters.get('use_trailing_stop', False):
         trailing_stop = parameters.get('trailing_stop_percent', 0.02)
@@ -26,24 +28,60 @@ def _calculate_stop(portfolio_kwargs: Dict[str, Any], parameters: Dict[str, Any]
     else:
         portfolio_kwargs['sl_trail'] = False
 
+
+def _calculate_custom_position_size(strategy, df, initial_capital, pip_value):
+    """Calculate position size using strategy's custom risk parameters if available."""
+    if hasattr(strategy, 'fixed_risk_pct') and hasattr(strategy, 'position_multiplier'):
+        # Use strategy's own risk calculation
+        risk_amount = initial_capital * strategy.fixed_risk_pct
+        price = df['close'].iloc[-1]
+        sl_pct = strategy.sl_percent
+
+        # Base position size calculation
+        price_risk = price * sl_pct  # Absolute price risk
+        base_size = risk_amount / price_risk  # How many units for the risk amount
+
+        # Apply position multiplier
+        size = base_size * strategy.position_multiplier
+
+        logger.info(f"Custom position sizing: {size:.2f} units")
+        logger.info(f"  Risk: {risk_amount:.2f} ({strategy.fixed_risk_pct:.1%})")
+        logger.info(f"  Multiplier: {strategy.position_multiplier}x")
+
+        return size
+    return None
+
+
 def calculate_metrics(pf: vbt.Portfolio) -> Dict[str, Any]:
     """Calculate performance metrics for a portfolio."""
     metrics = {}
     metrics['total_return'] = float(pf.total_return())
-    metrics['sharpe_ratio'] = float(pf.sharpe_ratio()) if not np.isnan(pf.sharpe_ratio()) else 0.0
-    metrics['sortino_ratio'] = float(pf.sortino_ratio()) if not np.isnan(pf.sortino_ratio()) else 0.0
-    metrics['max_drawdown'] = float(pf.max_drawdown()) if not np.isnan(pf.max_drawdown()) else 0.0
-    metrics['cagr'] = float(pf.annualized_return()) if not np.isnan(pf.annualized_return()) else 0.0
-    metrics['calmar_ratio'] = abs(metrics['cagr'] / metrics['max_drawdown']) if metrics['cagr'] > 0 and metrics['max_drawdown'] < 0 else 0.0
+    metrics['sharpe_ratio'] = float(pf.sharpe_ratio()) if not np.isnan(
+        pf.sharpe_ratio()) else 0.0
+    metrics['sortino_ratio'] = float(pf.sortino_ratio()) if not np.isnan(
+        pf.sortino_ratio()) else 0.0
+    metrics['max_drawdown'] = float(pf.max_drawdown()) if not np.isnan(
+        pf.max_drawdown()) else 0.0
+    metrics['cagr'] = float(pf.annualized_return()) if not np.isnan(
+        pf.annualized_return()) else 0.0
+    metrics['calmar_ratio'] = abs(metrics['cagr'] / metrics['max_drawdown']) if metrics[
+                                                                                    'cagr'] > 0 and \
+                                                                                metrics[
+                                                                                    'max_drawdown'] < 0 else 0.0
 
     if len(pf.trades) > 0:
         metrics['win_rate'] = float(pf.trades.win_rate())
         metrics['trades_count'] = len(pf.trades)
-        metrics['avg_winning_trade'] = float(pf.trades.winning.pnl.mean()) if len(pf.trades.winning) > 0 else 0.0
-        metrics['avg_losing_trade'] = float(pf.trades.losing.pnl.mean()) if len(pf.trades.losing) > 0 else 0.0
-        total_win = float(pf.trades.winning.pnl.sum()) if len(pf.trades.winning) > 0 else 0.0
-        total_loss = float(abs(pf.trades.losing.pnl.sum())) if len(pf.trades.losing) > 0 else 0.0
-        metrics['profit_factor'] = total_win / total_loss if total_loss > 0 else float('inf')
+        metrics['avg_winning_trade'] = float(pf.trades.winning.pnl.mean()) if len(
+            pf.trades.winning) > 0 else 0.0
+        metrics['avg_losing_trade'] = float(pf.trades.losing.pnl.mean()) if len(
+            pf.trades.losing) > 0 else 0.0
+        total_win = float(pf.trades.winning.pnl.sum()) if len(
+            pf.trades.winning) > 0 else 0.0
+        total_loss = float(abs(pf.trades.losing.pnl.sum())) if len(
+            pf.trades.losing) > 0 else 0.0
+        metrics['profit_factor'] = total_win / total_loss if total_loss > 0 else float(
+            'inf')
     else:
         metrics['win_rate'] = 0.0
         metrics['trades_count'] = 0
@@ -53,14 +91,19 @@ def calculate_metrics(pf: vbt.Portfolio) -> Dict[str, Any]:
 
     return metrics
 
-def calculate_income_metrics(pf: vbt.Portfolio, metrics: Dict[str, Any], initial_capital: float) -> Dict[str, Any]:
+
+def calculate_income_metrics(pf: vbt.Portfolio, metrics: Dict[str, Any],
+                             initial_capital: float) -> Dict[str, Any]:
     """Calculate absolute income metrics."""
     income_metrics = {}
     income_metrics['absolute_profit'] = float(initial_capital * metrics['total_return'])
-    income_metrics['avg_profit_per_trade'] = float(income_metrics['absolute_profit'] / metrics['trades_count']) if metrics['trades_count'] > 0 else 0.0
+    income_metrics['avg_profit_per_trade'] = float(
+        income_metrics['absolute_profit'] / metrics['trades_count']) if metrics[
+                                                                            'trades_count'] > 0 else 0.0
     days = (pf.wrapper.index[-1] - pf.wrapper.index[0]).days
     months = days / 30.0 if days > 0 else 1.0
-    income_metrics['avg_monthly_profit'] = float(income_metrics['absolute_profit'] / months)
+    income_metrics['avg_monthly_profit'] = float(
+        income_metrics['absolute_profit'] / months)
     return income_metrics
 
 
@@ -69,7 +112,7 @@ def run_extended_backtest(strategy_name: str, parameters: Dict[str, Any], symbol
                           period_days: int = 1095,
                           initial_capital: float = INITIAL_CAPITAL,
                           end_date: Optional[datetime] = None, silent: bool = False) -> \
-Tuple[Optional[vbt.Portfolio], Dict[str, Any]]:
+        Tuple[Optional[vbt.Portfolio], Dict[str, Any]]:
     """
     Perform an extended backtest with VectorBT.
 
@@ -121,24 +164,32 @@ Tuple[Optional[vbt.Portfolio], Dict[str, Any]]:
     returns = df['close'].pct_change().dropna()
     symbol_info = risk_manager.get_symbol_info(symbol)
     pip_value = symbol_info["pip_value"] if symbol_info else 10.0
-    size = risk_manager.calculate_position_size(capital=initial_capital,
-                                                returns=returns, pip_value=pip_value,
-                                                symbol=symbol)
 
     # Generate signals
     strategy = get_strategy(strategy_name, **parameters)
     entries, sl_stop, tp_stop = strategy.generate_signals(df)
 
+    # Calculate position size - TRY USING CUSTOM SIZE FIRST
+    custom_size = _calculate_custom_position_size(strategy, df, initial_capital,
+                                                  pip_value)
+    if custom_size is not None:
+        size = custom_size
+    else:
+        # Use standard RiskManager as fallback
+        size = risk_manager.calculate_position_size(capital=initial_capital,
+                                                    returns=returns,
+                                                    pip_value=pip_value, symbol=symbol)
+
     # Map timeframe to freq
     timeframe_to_freq = {'M1': '1min', 'M5': '5min', 'M15': '15min', 'M30': '30min',
-        'H1': '1h', 'H4': '4h', 'D1': '1d', 'W1': '1w', 'MN1': '1M'}
+                         'H1': '1h', 'H4': '4h', 'D1': '1d', 'W1': '1w', 'MN1': '1M'}
     freq = timeframe_to_freq.get(str(timeframe), '1d')
 
     # Create portfolio with VectorBT
     portfolio_kwargs = {'close': df['close'], 'entries': entries > 0,
-        'short_entries': entries < 0, 'sl_stop': sl_stop, 'tp_stop': tp_stop,
-        'init_cash': initial_capital, 'fees': FEES, 'freq': freq, 'size': size,
-        'size_type': 'amount'}
+                        'short_entries': entries < 0, 'sl_stop': sl_stop,
+                        'tp_stop': tp_stop, 'init_cash': initial_capital, 'fees': FEES,
+                        'freq': freq, 'size': size, 'size_type': 'amount'}
     _calculate_stop(portfolio_kwargs, parameters)
 
     try:
