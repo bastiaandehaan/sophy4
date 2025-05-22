@@ -1,204 +1,365 @@
+# risk/risk_management.py - Enhanced Version
 import logging
-from typing import Dict, Optional, Tuple, Any
-
+from typing import Dict, Optional, Tuple, Any, List
+from enum import Enum
+from dataclasses import dataclass
 import MetaTrader5 as mt5
 import numpy as np
 import pandas as pd
-import vectorbt as vbt
 from scipy.stats import norm
+from config import logger
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
-class RiskManager:
-    """Risk management class with VectorBT integration."""
-    def __init__(self, confidence_level: float = 0.95, max_risk: float = 0.01,
-                 max_daily_loss_percent: float = 0.05, max_total_loss_percent: float = 0.10,
-                 correlated_symbols: Optional[Dict[str, list]] = None):
+class RiskModel(Enum):
+    """Risk calculation models."""
+    FIXED_PERCENT = "fixed_percent"
+    VAR_HISTORICAL = "var_historical"
+    VAR_PARAMETRIC = "var_parametric"
+    KELLY_CRITERION = "kelly_criterion"
+    ADAPTIVE = "adaptive"
+
+
+@dataclass
+class RiskLimits:
+    """Risk limit configuration."""
+    max_risk_per_trade: float = 0.02
+    max_daily_loss: float = 0.05
+    max_total_loss: float = 0.10
+    max_portfolio_heat: float = 0.06  # Total risk across all positions
+    max_correlation_exposure: float = 0.04  # Max risk in correlated assets
+
+
+class EnhancedRiskManager:
+    """
+    Advanced risk management with multiple models and safety checks.
+    """
+
+    def __init__(self, confidence_level: float = 0.95,
+            risk_model: RiskModel = RiskModel.ADAPTIVE,
+            limits: Optional[RiskLimits] = None, lookback_periods: int = 252,
+            correlation_threshold: float = 0.7):
         self.confidence_level = confidence_level
-        self.max_risk = max_risk
-        self.max_daily_loss_percent = max_daily_loss_percent
-        self.max_total_loss_percent = max_total_loss_percent
-        self.correlated_symbols = correlated_symbols or {}
-        self.var_cache: Dict[Tuple, float] = {}
+        self.risk_model = risk_model
+        self.limits = limits or RiskLimits()
+        self.lookback_periods = lookback_periods
+        self.correlation_threshold = correlation_threshold
 
-    # Wijzig de functie get_symbol_info in risk/risk_management.py
-    def get_symbol_info(self, symbol: str) -> Optional[Dict[str, float]]:
-        """Retrieve symbol information via MT5 API."""
+        # Caching
+        self._var_cache: Dict[Tuple, float] = {}
+        self._symbol_cache: Dict[str, Dict] = {}
+
+        # Performance tracking
+        self._trade_history: List[Dict] = []
+
+        logger.info(f"RiskManager initialized with {risk_model.value} model")
+
+    def calculate_position_size(self, symbol: str, capital: float, returns: pd.Series,
+            entry_price: float, stop_loss_price: float,
+            current_positions: Optional[Dict[str, float]] = None,
+            strategy_performance: Optional[Dict] = None) -> Dict[str, Any]:
+        """
+        Calculate optimal position size using selected risk model.
+
+        Returns:
+            Dict with position_size, risk_amount, confidence_score, warnings
+        """
+        result = {'position_size': 0.0, 'risk_amount': 0.0, 'confidence_score': 0.0,
+            'warnings': [], 'model_used': self.risk_model.value}
+
+        try:
+            # Pre-flight safety checks
+            safety_check = self._safety_checks(symbol, capital, current_positions)
+            if not safety_check['passed']:
+                result['warnings'] = safety_check['warnings']
+                return result
+
+            # Get symbol info
+            symbol_info = self._get_symbol_info(symbol)
+            if not symbol_info:
+                result['warnings'].append(f"Cannot retrieve symbol info for {symbol}")
+                return result
+
+            # Calculate risk amount based on model
+            if self.risk_model == RiskModel.FIXED_PERCENT:
+                risk_amount = capital * self.limits.max_risk_per_trade
+
+            elif self.risk_model == RiskModel.VAR_HISTORICAL:
+                var_risk = self._calculate_var_historical(returns, capital)
+                risk_amount = min(var_risk, capital * self.limits.max_risk_per_trade)
+
+            elif self.risk_model == RiskModel.KELLY_CRITERION:
+                kelly_risk = self._calculate_kelly_size(strategy_performance, capital)
+                risk_amount = min(kelly_risk, capital * self.limits.max_risk_per_trade)
+
+            elif self.risk_model == RiskModel.ADAPTIVE:
+                risk_amount = self._calculate_adaptive_size(symbol, capital, returns,
+                    strategy_performance, current_positions)
+            else:
+                risk_amount = capital * self.limits.max_risk_per_trade
+
+            # Calculate position size from risk amount
+            price_risk = abs(entry_price - stop_loss_price)
+            if price_risk <= 0:
+                result['warnings'].append("Invalid stop loss: no price risk")
+                return result
+
+            # Account for contract size and currency conversion
+            contract_size = symbol_info.get('contract_size', 1.0)
+            position_size = risk_amount / (price_risk * contract_size)
+
+            # Apply position size limits
+            min_size = symbol_info.get('volume_min', 0.01)
+            max_size = symbol_info.get('volume_max', 100.0)
+            position_size = max(min_size, min(position_size, max_size))
+
+            # Portfolio heat check
+            portfolio_heat = self._calculate_portfolio_heat(current_positions,
+                                                            risk_amount)
+            if portfolio_heat > self.limits.max_portfolio_heat:
+                position_size *= (self.limits.max_portfolio_heat / portfolio_heat)
+                result['warnings'].append(
+                    f"Position reduced due to portfolio heat: {portfolio_heat:.2%}")
+
+            # Correlation check
+            correlation_risk = self._check_correlation_risk(symbol, current_positions)
+            if correlation_risk > self.limits.max_correlation_exposure:
+                position_size *= 0.5  # Reduce by half for correlated assets
+                result['warnings'].append(f"Position reduced due to correlation risk")
+
+            result.update(
+                {'position_size': round(position_size, 2), 'risk_amount': risk_amount,
+                    'confidence_score': self._calculate_confidence_score(returns,
+                                                                         strategy_performance),
+                    'portfolio_heat': portfolio_heat,
+                    'correlation_risk': correlation_risk})
+
+            logger.debug(
+                f"Position size calculated for {symbol}: {position_size:.2f} lots")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error calculating position size for {symbol}: {e}")
+            result['warnings'].append(f"Calculation error: {str(e)}")
+            return result
+
+    def _calculate_adaptive_size(self, symbol: str, capital: float, returns: pd.Series,
+            strategy_performance: Optional[Dict],
+            current_positions: Optional[Dict]) -> float:
+        """Adaptive risk sizing based on multiple factors."""
+        base_risk = capital * self.limits.max_risk_per_trade
+
+        # Factor 1: Volatility adjustment
+        if len(returns) >= 20:
+            current_vol = returns.tail(20).std()
+            long_vol = returns.std()
+            vol_ratio = current_vol / long_vol if long_vol > 0 else 1.0
+            vol_adjustment = 1.0 / max(vol_ratio, 0.5)  # Reduce size in high vol
+        else:
+            vol_adjustment = 1.0
+
+        # Factor 2: Strategy performance adjustment
+        if strategy_performance:
+            win_rate = strategy_performance.get('win_rate', 0.5)
+            profit_factor = strategy_performance.get('profit_factor', 1.0)
+            performance_score = (win_rate * profit_factor) / 0.5  # Normalized
+            performance_adjustment = min(max(performance_score, 0.5), 1.5)
+        else:
+            performance_adjustment = 1.0
+
+        # Factor 3: Market regime adjustment
+        market_stress = self._detect_market_stress(returns)
+        stress_adjustment = 0.5 if market_stress else 1.0
+
+        # Combine all factors
+        final_adjustment = vol_adjustment * performance_adjustment * stress_adjustment
+        adjusted_risk = base_risk * final_adjustment
+
+        logger.debug(f"Adaptive risk calculation: vol={vol_adjustment:.2f}, "
+                     f"perf={performance_adjustment:.2f}, stress={stress_adjustment:.2f}")
+
+        return min(adjusted_risk, capital * self.limits.max_risk_per_trade * 1.5)
+
+    def _calculate_kelly_size(self, strategy_performance: Optional[Dict],
+                              capital: float) -> float:
+        """Calculate Kelly criterion position size."""
+        if not strategy_performance:
+            return capital * self.limits.max_risk_per_trade
+
+        win_rate = strategy_performance.get('win_rate', 0.5)
+        avg_win = strategy_performance.get('avg_winning_trade', 1.0)
+        avg_loss = abs(strategy_performance.get('avg_losing_trade', -1.0))
+
+        if avg_loss == 0:
+            return capital * self.limits.max_risk_per_trade
+
+        win_loss_ratio = avg_win / avg_loss
+        kelly_fraction = (win_rate * win_loss_ratio - (1 - win_rate)) / win_loss_ratio
+
+        # Apply Kelly with safety factor (quarter Kelly)
+        safe_kelly = max(kelly_fraction * 0.25, 0.005)
+        return min(safe_kelly * capital, capital * self.limits.max_risk_per_trade * 2)
+
+    def _safety_checks(self, symbol: str, capital: float,
+                       current_positions: Optional[Dict]) -> Dict:
+        """Pre-flight safety checks."""
+        warnings = []
+
+        # Capital check
+        if capital <= 0:
+            warnings.append("Invalid capital amount")
+
+        # Market hours check
+        if not self._is_market_open(symbol):
+            warnings.append(f"Market closed for {symbol}")
+
+        # Daily loss check
+        daily_pnl = self._get_daily_pnl(current_positions)
+        if daily_pnl < -capital * self.limits.max_daily_loss:
+            warnings.append("Daily loss limit exceeded")
+
+        return {'passed': len(warnings) == 0, 'warnings': warnings}
+
+    def _detect_market_stress(self, returns: pd.Series) -> bool:
+        """Detect high-stress market conditions."""
+        if len(returns) < 20:
+            return False
+
+        # Check for extreme volatility spikes
+        recent_vol = returns.tail(5).std()
+        normal_vol = returns.tail(60).std()
+
+        return recent_vol > normal_vol * 2.0
+
+    def _calculate_portfolio_heat(self, current_positions: Optional[Dict],
+                                  new_risk: float) -> float:
+        """Calculate total portfolio risk exposure."""
+        if not current_positions:
+            return new_risk / 10000  # Assume 10k capital for percentage
+
+        total_risk = sum(
+            pos.get('risk_amount', 0) for pos in current_positions.values())
+        return (total_risk + new_risk) / 10000
+
+    def _check_correlation_risk(self, symbol: str,
+                                current_positions: Optional[Dict]) -> float:
+        """Check correlation risk with existing positions."""
+        # Simplified correlation mapping
+        correlations = {'EURUSD': ['GBPUSD', 'EURGBP', 'USDCHF'],
+            'GER40.cash': ['FRA40.cash', 'UK100.cash'], 'XAUUSD': ['XAGUSD']}
+
+        if not current_positions:
+            return 0.0
+
+        correlated_symbols = correlations.get(symbol, [])
+        correlated_risk = sum(
+            pos.get('risk_amount', 0) for sym, pos in current_positions.items() if
+            sym in correlated_symbols)
+
+        return correlated_risk / 10000  # Convert to percentage
+
+    def _get_symbol_info(self, symbol: str) -> Optional[Dict]:
+        """Get and cache symbol information."""
+        if symbol in self._symbol_cache:
+            return self._symbol_cache[symbol]
+
         try:
             if not mt5.initialize():
-                logger.warning(f"MT5 initialization failed for {symbol}.")
                 return None
 
             symbol_info = mt5.symbol_info(symbol)
             if symbol_info is None:
-                logger.warning(f"Cannot retrieve symbol info for {symbol}.")
                 return None
 
-            # Gebruik getattr met een default waarde om de ontbrekende tick_size te omzeilen
-            tick_size = getattr(symbol_info, 'tick_size', 0.01)
-            pip_value = tick_size * symbol_info.trade_contract_size
-            spread = symbol_info.spread * symbol_info.point
-            tick_value = getattr(symbol_info, 'trade_tick_value', 10.0)
+            info = {'contract_size': symbol_info.trade_contract_size,
+                'volume_min': symbol_info.volume_min,
+                'volume_max': symbol_info.volume_max,
+                'volume_step': symbol_info.volume_step,
+                'tick_size': symbol_info.tick_size,
+                'tick_value': getattr(symbol_info, 'trade_tick_value', 10.0)}
 
-            return {"pip_value": pip_value, "spread": spread, "tick_value": tick_value,
-                    "tick_size": tick_size,
-                    "contract_size": symbol_info.trade_contract_size}
+            self._symbol_cache[symbol] = info
+            return info
+
         except Exception as e:
-            logger.error(f"Error retrieving symbol info for {symbol}: {str(e)}")
+            logger.error(f"Error getting symbol info for {symbol}: {e}")
             return None
         finally:
             mt5.shutdown()
-    def is_market_open(self, symbol: str) -> bool:
-        """Check if the market is open for the given symbol."""
+
+    def _is_market_open(self, symbol: str) -> bool:
+        """Check if market is open for symbol."""
         try:
             if not mt5.initialize():
-                logger.warning(f"MT5 initialization failed for {symbol}.")
-                return False
-
-            symbol_info = mt5.symbol_info(symbol)
-            if symbol_info is None:
-                logger.warning(f"Cannot retrieve symbol info for {symbol}.")
                 return False
 
             tick = mt5.symbol_info_tick(symbol)
             if tick is None:
-                logger.warning(f"No tick data for {symbol}.")
                 return False
 
-            spread = (tick.ask - tick.bid) / symbol_info.point
-            return 0 < spread < 1000
-        except Exception as e:
-            logger.error(f"Error checking market status for {symbol}: {str(e)}")
+            # Basic check: if we can get recent tick data
+            return True
+
+        except Exception:
             return False
         finally:
             mt5.shutdown()
 
-    def calculate_var(self, returns: pd.Series, capital: float,
-                      symbol: Optional[str] = None,
-                      open_positions: Optional[Dict[str, int]] = None) -> float:
-        """Calculate Value at Risk (VaR) using historical method."""
-        if len(returns) < 10 or returns.empty:
-            logger.warning(
-                "No valid returns data for VaR calculation, returning default VaR")
-            return 0.01
+    def _get_daily_pnl(self, current_positions: Optional[Dict]) -> float:
+        """Get current daily P&L."""
+        if not current_positions:
+            return 0.0
 
-        cache_key = (tuple(returns.values), capital, symbol if symbol else "",
-                     tuple(sorted(open_positions.items())) if open_positions else ())
+        return sum(pos.get('unrealized_pnl', 0) for pos in current_positions.values())
 
-        if cache_key in self.var_cache:
-            return self.var_cache[cache_key]
+    def _calculate_confidence_score(self, returns: pd.Series,
+                                    strategy_performance: Optional[Dict]) -> float:
+        """Calculate confidence score for the trade setup."""
+        score = 0.5  # Base score
 
-        # In plaats van vbt.Returns.from_pandas, gebruiken we numpy direct
-        portfolio_returns = returns.values
+        # Data quality factor
+        if len(returns) >= 100:
+            score += 0.2
 
-        if symbol and open_positions and self.correlated_symbols:
-            correlated = self.correlated_symbols.get(symbol, [])
-            total_positions = sum(open_positions.values())
-            if total_positions > 0:
-                weights = np.ones(len(correlated) + 1) / (len(correlated) + 1)
-                portfolio_returns = portfolio_returns * weights[0]
-                for i, corr_symbol in enumerate(correlated):
-                    if corr_symbol in open_positions:
-                        portfolio_returns += portfolio_returns * weights[i + 1]
+        # Strategy performance factor
+        if strategy_performance:
+            win_rate = strategy_performance.get('win_rate', 0.5)
+            if win_rate > 0.6:
+                score += 0.2
+            elif win_rate < 0.4:
+                score -= 0.2
 
-        from scipy.stats import norm
+        # Volatility factor
+        if len(returns) >= 20:
+            vol_ratio = returns.tail(10).std() / returns.std()
+            if vol_ratio < 1.2:  # Low current volatility
+                score += 0.1
 
-        mean = np.mean(portfolio_returns)
-        std_dev = np.std(portfolio_returns)
-        z_score = norm.ppf(self.confidence_level)
-        var = capital * (mean - z_score * std_dev)
+        return max(0.0, min(1.0, score))
 
-        self.var_cache[cache_key] = var
-        logger.debug(f"Calculated VaR for {symbol}: {var:.2f}")
-        return var
-    def calculate_position_size(self, capital: float, returns: pd.Series,
-                                pip_value: float, symbol: Optional[str] = None,
-                                open_positions: Optional[Dict[str, int]] = None) -> float:
-        """Calculate position size using VectorBT."""
-        effective_pip_value = pip_value
-        spread_cost = 0.0
-        if symbol:
-            symbol_info = self.get_symbol_info(symbol)
-            if symbol_info:
-                effective_pip_value = symbol_info["pip_value"]
-                spread_cost = symbol_info["spread"]
-            if not self.is_market_open(symbol):
-                logger.warning(f"Market is closed for {symbol}. Position size set to 0.")
-                return 0.0
+    def update_trade_result(self, symbol: str, entry_price: float, exit_price: float,
+                            position_size: float, result: str) -> None:
+        """Update trade history for performance tracking."""
+        trade = {'symbol': symbol, 'entry_price': entry_price, 'exit_price': exit_price,
+            'position_size': position_size,
+            'pnl': (exit_price - entry_price) * position_size, 'result': result,
+            # 'win' or 'loss'
+            'timestamp': pd.Timestamp.now()}
 
-        risk_amount = capital * self.max_risk
-        var = self.calculate_var(returns, capital, symbol, open_positions)
-        risk_amount = min(risk_amount, var)
+        self._trade_history.append(trade)
 
-        points_at_risk = capital * 0.01 / effective_pip_value
-        points_at_risk = max(points_at_risk, 100)  # Default to 100 points
+        # Keep only recent trades for performance calculation
+        if len(self._trade_history) > 100:
+            self._trade_history = self._trade_history[-100:]
 
-        total_risk_per_unit = (points_at_risk * effective_pip_value) + spread_cost
-        position_size = risk_amount / total_risk_per_unit
-        position_size = max(0.01, min(position_size, 10.0))  # Limit between 0.01 and 10 lots
+    def get_performance_stats(self) -> Dict[str, float]:
+        """Get recent performance statistics."""
+        if not self._trade_history:
+            return {}
 
-        logger.info(f"Calculated position size for {symbol}: {position_size:.2f} lots")
-        return position_size
+        df = pd.DataFrame(self._trade_history)
 
-    def calculate_adjusted_position_size(self, capital: float, returns: pd.Series,
-                                         symbol: Optional[str] = None, price: Optional[float] = None,
-                                         open_positions: Optional[Dict[str, int]] = None) -> float:
-        """Advanced position size calculation."""
-        pip_value = 10.0
-        if symbol:
-            symbol_info = self.get_symbol_info(symbol)
-            if symbol_info:
-                pip_value = symbol_info["pip_value"]
-            else:
-                try:
-                    from config import PIP_VALUES
-                    pip_value = PIP_VALUES.get(symbol, 10.0)
-                except (ImportError, KeyError):
-                    logger.warning(f"No pip value found for {symbol}, using default: {pip_value}")
-
-        sl_distance = getattr(self, 'sl_fixed_percent', 0.01)
-        risk_amount = capital * self.max_risk
-        var = self.calculate_var(returns, capital, symbol, open_positions)
-        risk_amount = min(risk_amount, var)
-
-        if price and price > 0:
-            price_risk = price * sl_distance
-            position_size = risk_amount / price_risk
-        else:
-            points_at_risk = capital * 0.01 / pip_value
-            position_size = risk_amount / (points_at_risk * pip_value)
-
-        position_size = max(0.01, min(position_size, 10.0))
-        logger.info(f"Adjusted position size for {symbol}: {position_size:.2f} lots")
-        return position_size
-
-    def monitor_drawdown(self, current_capital: float, max_value: float) -> bool:
-        """Monitor drawdown against FTMO limits."""
-        daily_loss = (max_value - current_capital) / max_value
-        total_loss = (max_value - current_capital) / max_value
-
-        if daily_loss > self.max_daily_loss_percent:
-            logger.error(f"Daily loss ({daily_loss:.2%}) exceeds FTMO limit ({self.max_daily_loss_percent:.2%})")
-            return True
-        if total_loss > self.max_total_loss_percent:
-            logger.error(f"Total loss ({total_loss:.2%}) exceeds FTMO limit ({self.max_total_loss_percent:.2%})")
-            return True
-        return False
-
-    def get_max_daily_loss(self, capital: float) -> float:
-        """Calculate maximum allowable daily loss."""
-        max_loss = capital * self.max_daily_loss_percent
-        logger.debug(f"Max daily loss for capital {capital}: {max_loss:.2f}")
-        return max_loss
-
-    def get_max_total_loss(self, capital: float) -> float:
-        """Calculate maximum allowable total loss."""
-        max_loss = capital * self.max_total_loss_percent
-        logger.debug(f"Max total loss for capital {capital}: {max_loss:.2f}")
-        return max_loss
-
-    def clear_cache(self) -> None:
-        """Clear the VaR cache."""
-        self.var_cache.clear()
-        logger.info("VaR cache cleared")
+        return {'win_rate': len(df[df['result'] == 'win']) / len(df),
+            'avg_winning_trade': df[df['pnl'] > 0]['pnl'].mean(),
+            'avg_losing_trade': df[df['pnl'] < 0]['pnl'].mean(), 'profit_factor': abs(
+                df[df['pnl'] > 0]['pnl'].sum() / df[df['pnl'] < 0]['pnl'].sum()) if len(
+                df[df['pnl'] < 0]) > 0 else 0, 'total_trades': len(df)}
