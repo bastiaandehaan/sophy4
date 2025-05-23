@@ -1,4 +1,4 @@
-# strategies/simple_order_block.py - PERFORMANCE BOOSTED VERSION
+# strategies/simple_order_block.py - BALANCED VERSION WITH KELLY SIZING
 from typing import Dict, Tuple, Optional, List, Any
 import pandas as pd
 import numpy as np
@@ -12,8 +12,8 @@ from utils.indicator_utils import calculate_bollinger_bands
 @register_strategy
 class SimpleOrderBlockStrategy(BaseStrategy):
     """
-    PERFORMANCE-BOOSTED Order Block Strategy
-    Target: 35% → 47%+ Win Rate
+    BALANCED Order Block Strategy with Kelly Sizing
+    Target: 42-44% Win Rate with Increased Trade Frequency
     """
 
     def __init__(self, **kwargs):
@@ -32,21 +32,21 @@ class SimpleOrderBlockStrategy(BaseStrategy):
         self.volume_multiplier = kwargs.get('volume_multiplier', 1.1)
         self.volume_period = kwargs.get('volume_period', 20)
 
-        # NEW PERFORMANCE BOOSTERS
+        # BALANCED PERFORMANCE FILTERS
         self.use_rejection_wicks = kwargs.get('use_rejection_wicks', True)
-        self.use_session_filter = kwargs.get('use_session_filter', True)
+        self.use_session_filter = kwargs.get('use_session_filter', False)  # DISABLED - too restrictive
         self.use_htf_confirmation = kwargs.get('use_htf_confirmation', True)
-        self.min_wick_ratio = kwargs.get('min_wick_ratio', 0.4)  # 40% wick minimum
+        self.min_wick_ratio = kwargs.get('min_wick_ratio', 0.3)  # RELAXED from 0.4 to 0.3
 
         # Bollinger settings
         self.bb_window = kwargs.get('bb_window', 20)
         self.bb_std = kwargs.get('bb_std', 1.5)
 
-        logger.info("=== PERFORMANCE-BOOSTED SimpleOrderBlockStrategy ===")
-        logger.info(f"🎯 Target: 35% → 47%+ Win Rate")
-        logger.info(f"✅ Rejection Wicks: {self.use_rejection_wicks}")
-        logger.info(f"✅ Session Filter: {self.use_session_filter}")
-        logger.info(f"✅ HTF Confirmation: {self.use_htf_confirmation}")
+        logger.info("=== BALANCED SimpleOrderBlockStrategy with Kelly Sizing ===")
+        logger.info(f"Target: 42-44% Win Rate with Increased Trade Frequency")
+        logger.info(f"Rejection Wicks: {self.use_rejection_wicks}")
+        logger.info(f"Session Filter: {self.use_session_filter}")
+        logger.info(f"HTF Confirmation: {self.use_htf_confirmation}")
 
     def detect_rejection_wicks(self, df: pd.DataFrame) -> pd.Series:
         """
@@ -68,16 +68,17 @@ class SimpleOrderBlockStrategy(BaseStrategy):
 
     def is_active_session(self, df: pd.DataFrame) -> pd.Series:
         """
-        PERFORMANCE BOOSTER #2: Session Filtering
+        RELAXED Session Filter - Include more hours
         Expected Impact: +8% win rate
-        Only trade during London/NY overlap (13:00-17:00 UTC)
+        Only trade during expanded hours (08:00-18:00 UTC)
         """
         if not hasattr(df.index, 'hour'):
             # If no datetime index, return all True
             return pd.Series(True, index=df.index)
 
-        # London + NY overlap = highest liquidity & trends
-        active_hours = (df.index.hour >= 13) & (df.index.hour <= 17)
+        # EXPANDED: London morning + London/NY overlap + NY afternoon
+        # 08:00-18:00 UTC (was 13:00-17:00)
+        active_hours = (df.index.hour >= 8) & (df.index.hour <= 18)
 
         return active_hours
 
@@ -127,12 +128,57 @@ class SimpleOrderBlockStrategy(BaseStrategy):
 
         return low_stress
 
+    def calculate_trade_stats(self, df: pd.DataFrame, entries: pd.Series) -> Tuple[float, float, float]:
+        """
+        Calculate win_rate, avg_win, and avg_loss based on historical trades
+        """
+        trades = []
+        for i in range(len(entries)):
+            if entries.iloc[i] > 0:  # Entry signal
+                entry_price = df['close'].iloc[i]
+                # Simulate exit based on SL/TP
+                sl = entry_price * (1 - self.sl_percent)
+                tp = entry_price * (1 + self.tp_percent)
+                for j in range(i + 1, len(df)):
+                    if j >= len(df):
+                        break
+                    if df['low'].iloc[j] <= sl:
+                        trades.append(entry_price - sl)
+                        break
+                    if df['high'].iloc[j] >= tp:
+                        trades.append(tp - entry_price)
+                        break
+
+        if not trades:
+            return 0.46, 10.96, -4.23  # Fallback to default values
+
+        wins = [t for t in trades if t > 0]
+        losses = [t for t in trades if t <= 0]
+        win_rate = len(wins) / len(trades) if trades else 0.46
+        avg_win = sum(wins) / len(wins) if wins else 10.96
+        avg_loss = sum(losses) / len(losses) if losses else -4.23
+
+        return win_rate, avg_win, avg_loss
+
+    def calculate_kelly_size(self, win_rate: float, avg_win: float, avg_loss: float, capital: float) -> float:
+        """
+        Calculate Kelly position size
+        """
+        if avg_loss == 0:
+            return 0.01
+
+        win_loss_ratio = abs(avg_win / avg_loss)
+        kelly_pct = (win_rate * win_loss_ratio - (1 - win_rate)) / win_loss_ratio
+
+        # Cap at 2% for safety
+        return min(max(kelly_pct * 0.25, 0.005), 0.02)
+
     def generate_signals(self, df: pd.DataFrame, current_capital: float = None) -> \
-    Tuple[pd.Series, pd.Series, pd.Series]:
+    Tuple[pd.Series, pd.Series, pd.Series, pd.Series]:
         """
-        ENHANCED signal generation with performance boosters
+        BALANCED signal generation with performance boosters and Kelly sizing
         """
-        logger.info(f"🚀 Generating ENHANCED signals for {len(df)} bars...")
+        logger.info(f"Generating BALANCED signals for {len(df)} bars...")
 
         # ORIGINAL FILTERS (working baseline)
         body_size = abs(df['close'] - df['open'])
@@ -156,38 +202,46 @@ class SimpleOrderBlockStrategy(BaseStrategy):
         # BASELINE SIGNALS (35.3% win rate)
         base_signals = is_bullish & big_body & uptrend & rsi_ok & volume_ok
 
-        # 🚀 PERFORMANCE BOOSTERS
+        # PERFORMANCE BOOSTERS
         enhanced_filters = pd.Series(True, index=df.index)
 
         # Booster #1: Rejection Wicks (+10% win rate)
         if self.use_rejection_wicks:
             rejection_wicks = self.detect_rejection_wicks(df)
             enhanced_filters = enhanced_filters & rejection_wicks
-            logger.info(f"✅ Rejection wick filter: {rejection_wicks.sum()} bars pass")
+            logger.info(f"Rejection wick filter: {rejection_wicks.sum()} bars pass")
 
-        # Booster #2: Session Filter (+8% win rate)
+        # Booster #2: Session Filter (+8% win rate) - DISABLED by default
         if self.use_session_filter:
             active_session = self.is_active_session(df)
             enhanced_filters = enhanced_filters & active_session
             logger.info(
-                f"✅ Session filter: {active_session.sum()} bars in active hours")
+                f"Session filter: {active_session.sum()} bars in active hours")
 
         # Booster #3: HTF Confirmation (+7% win rate)
         htf_bullish = self.get_htf_confirmation(df)
         if not htf_bullish:
-            logger.info("⚠️  HTF bearish - reducing signal strength")
+            logger.info("HTF bearish - reducing signal strength")
             enhanced_filters = enhanced_filters & False  # Block all signals
         else:
-            logger.info("✅ HTF bullish - signals allowed")
+            logger.info("HTF bullish - signals allowed")
 
         # Booster #4: Market Stress Filter (+5% win rate)
         low_stress = self.detect_market_stress(df)
         enhanced_filters = enhanced_filters & low_stress
-        logger.info(f"✅ Low stress filter: {low_stress.sum()} bars pass")
+        logger.info(f"Low stress filter: {low_stress.sum()} bars pass")
 
         # COMBINE ALL FILTERS
         final_signals = base_signals & enhanced_filters
         entries = final_signals.fillna(False).astype(int)
+
+        # Calculate Kelly position size
+        win_rate, avg_win, avg_loss = self.calculate_trade_stats(df, entries)
+        kelly_size = self.calculate_kelly_size(win_rate, avg_win, avg_loss, current_capital if current_capital else 10000)
+
+        # Create a Series for position sizes
+        sizes = pd.Series(kelly_size, index=df.index)
+        sizes = sizes.where(entries > 0, 0)  # Apply only where entries exist
 
         # Stop Loss and Take Profit
         sl_stop = pd.Series(self.sl_percent, index=df.index)
@@ -198,11 +252,12 @@ class SimpleOrderBlockStrategy(BaseStrategy):
         num_enhanced = entries.sum()
         filter_reduction = (num_baseline - num_enhanced) / max(num_baseline, 1) * 100
 
-        logger.info(f"🎯 SIGNAL FILTERING RESULTS:")
+        logger.info(f"SIGNAL FILTERING RESULTS:")
         logger.info(f"   Baseline signals: {num_baseline}")
         logger.info(f"   Enhanced signals: {num_enhanced}")
         logger.info(f"   Filter reduction: {filter_reduction:.1f}%")
-        logger.info(f"   Expected win rate: 47%+ (vs 35.3% baseline)")
+        logger.info(f"   Expected win rate: 42-44% (vs 35.3% baseline)")
+        logger.info(f"   Kelly position size: {kelly_size:.4f}")
 
         if num_enhanced > 0:
             signal_dates = df.index[entries > 0][:3]
@@ -210,4 +265,4 @@ class SimpleOrderBlockStrategy(BaseStrategy):
                 price = df.loc[date, 'close']
                 logger.info(f"   Signal {i + 1}: {date}, Price: {price:.1f}")
 
-        return entries, sl_stop, tp_stop
+        return entries, sl_stop, tp_stop, sizes
