@@ -240,8 +240,7 @@ class UnifiedConfigManager:
                     result = {
                         'pip_value': getattr(symbol_info, 'trade_tick_value', 10.0),
                         'contract_size': symbol_info.trade_contract_size,
-                        'tick_size': symbol_info.tick_size,
-                        'volume_min': symbol_info.volume_min,
+                        'tick_size': getattr(symbol_info, 'point', 0.0001),                        'volume_min': symbol_info.volume_min,
                         'volume_max': symbol_info.volume_max}
                     mt5.shutdown()
                     return result

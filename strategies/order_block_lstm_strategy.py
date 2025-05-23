@@ -479,37 +479,3 @@ class OrderBlockLSTMStrategy(BaseStrategy):
             # Last 5 errors
         }
 
-    @classmethod
-    def get_default_params(cls, timeframe: str = "H1") -> Dict[str, Any]:
-        """Get default parameters with error handling."""
-        try:
-            base_config = get_strategy_config("OrderBlockLSTMStrategy", timeframe)
-
-            return {'symbol': [base_config.get('symbol', "GER40.cash")],
-                'timeframe': [timeframe], 'ob_lookback': [15, 20, 25],
-                'ob_strength': [1.5, 2.0, 2.5], 'lstm_threshold': [0.3, 0.4, 0.5, 0.6],
-                'sl_fixed_percent': [0.015, 0.02, 0.025],
-                'tp_fixed_percent': [0.03, 0.04, 0.05], 'use_trailing_stop': [True],
-                'trailing_stop_percent': [0.008, 0.01, 0.015],
-                'risk_per_trade': [0.005, 0.0075, 0.01],
-                'model_confidence_threshold': [0.5, 0.6, 0.7]}
-        except Exception as e:
-            logger.error(f"Error getting default params: {e}")
-            # Fallback params
-            return {'symbol': ["GER40.cash"], 'ob_lookback': [20],
-                'sl_fixed_percent': [0.02], 'tp_fixed_percent': [0.04]}
-
-    @classmethod
-    def get_parameter_descriptions(cls) -> Dict[str, str]:
-        """Get parameter descriptions."""
-        return {'symbol': 'Trading symbol for the strategy',
-            'timeframe': 'Chart timeframe for analysis',
-            'ob_lookback': 'Periods to analyze for order block detection',
-            'ob_strength': 'Minimum strength multiplier for order block validation',
-            'lstm_threshold': 'LSTM prediction threshold for bullish signals',
-            'sl_fixed_percent': 'Stop-loss percentage',
-            'tp_fixed_percent': 'Take-profit percentage',
-            'use_trailing_stop': 'Enable trailing stop functionality',
-            'trailing_stop_percent': 'Trailing stop percentage',
-            'risk_per_trade': 'Risk per trade as percentage of capital',
-            'model_confidence_threshold': 'Minimum confidence for LSTM predictions'}

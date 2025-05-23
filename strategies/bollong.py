@@ -305,44 +305,6 @@ class BollongStrategy(BaseStrategy):
         logger.info(f"Aantal LONG signalen: {entries.sum()}")
         return entries, sl_stop, tp_stop
 
-    @classmethod
-    def get_default_params(cls, timeframe: str = "H1") -> Dict[str, List[Any]]:
-        """Geef default parameters terug gebaseerd op timeframe."""
-        with open("timeframe_config.json", "r") as f:
-            config = json.load(f)
-
-        tf_config = config.get(timeframe,
-                               config["H1"])  # Default to H1 if timeframe not found
-        return {'symbol': ["EURUSD", "GBPUSD", "XAUUSD"],  # Voeg symbool toe aan default params
-                'window': tf_config["window_range"],
-                'std_dev': tf_config["std_dev_range"], 'sl_method': ["fixed_percent"],
-                'sl_fixed_percent': tf_config["sl_fixed_percent_range"],
-                'tp_method': ["fixed_percent"],
-                'tp_fixed_percent': tf_config["tp_fixed_percent_range"],
-                'use_trailing_stop': [True],  # Only test with trailing stop enabled
-                'trailing_stop_percent': [0.01, 0.015, 0.02],  # Wider range
-                'risk_per_trade': [0.005, 0.01], 'confidence_level': [0.90, 0.95, 0.99]}
-
-    @classmethod
-    def get_parameter_descriptions(cls) -> Dict[str, str]:
-        """Beschrijf parameters."""
-        return {
-            'symbol': 'Handelssymbool voor de strategie (bijv. EURUSD, GBPUSD, XAUUSD)',
-            'window': 'Aantal perioden voor Bollinger Bands (voortschrijdend gemiddelde)',
-            'std_dev': 'Aantal standaarddeviaties voor de upper en lower bands',
-            'sl_method': 'Stop-loss methode: "atr_based" of "fixed_percent"',
-            'sl_atr_mult': 'Stop-loss als factor van ATR (als sl_method="atr_based")',
-            'sl_fixed_percent': 'Stop-loss als vast percentage (als sl_method="fixed_percent")',
-            'tp_method': 'Take-profit methode: "atr_based" of "fixed_percent"',
-            'tp_atr_mult': 'Take-profit als factor van ATR (als tp_method="atr_based")',
-            'tp_fixed_percent': 'Take-profit als vast percentage (als tp_method="fixed_percent")',
-            'use_trailing_stop': 'Trailing stop activeren (true/false)',
-            'trailing_stop_method': 'Methode voor trailing stop: "atr_based" of "fixed_percent"',
-            'trailing_stop_percent': 'Trailing stop als vast percentage',
-            'trailing_stop_atr_mult': 'Trailing stop als factor van ATR',
-            'trailing_activation_percent': 'Percentage prijsstijging voordat trailing stop wordt geactiveerd',
-            'risk_per_trade': 'Risico per trade als percentage van portfolio (0.01 = 1%)',
-            'confidence_level': 'Betrouwbaarheidsniveau voor VaR-berekening'}
 
     @classmethod
     def get_performance_metrics(cls) -> List[str]:
