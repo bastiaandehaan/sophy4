@@ -130,7 +130,7 @@ class UnifiedConfigManager:
     def _load_configs(self) -> None:
         """Load configuration from files."""
         config_files = {'trading': 'trading_config.json',
-            'backtest': 'backtest_config.json', 'logging': 'logging_config.json'}
+            'backtest': 'backtest_config.json', 'logging_config': 'logging_config.json'}
 
         for config_name, filename in config_files.items():
             config_path = self.config_dir / filename
@@ -140,7 +140,8 @@ class UnifiedConfigManager:
                         data = json.load(f)
                         self._update_config(config_name, data)
                 except Exception as e:
-                    logger.warning(f"Failed to load {filename}: {e}")
+                    print(
+                        f"Warning: Failed to load {filename}: {e}")  # Use print instead of logger
             else:
                 # Create default config file
                 self._save_default_config(config_name, config_path)
@@ -225,7 +226,8 @@ class UnifiedConfigManager:
                 mt5.shutdown()
                 return available_symbols if available_symbols else default_symbols
         except Exception as e:
-            logger.warning(f"Could not load symbols from MT5: {e}")
+            print(
+                f"Warning: Could not load symbols from MT5: {e}")  # Use print instead of logger
 
         return default_symbols
 
@@ -245,7 +247,8 @@ class UnifiedConfigManager:
                     return result
                 mt5.shutdown()
         except Exception as e:
-            logger.warning(f"Error getting symbol info for {symbol}: {e}")
+            print(
+                f"Warning: Error getting symbol info for {symbol}: {e}")  # Use print instead of logger
 
         return None
 
@@ -334,7 +337,7 @@ class UnifiedConfigManager:
     def save_config(self) -> None:
         """Save current configuration to files."""
         configs = {'trading': self.trading, 'backtest': self.backtest,
-            'logging': self.logging_config}
+            'logging_config': self.logging_config}
 
         for config_name, config_obj in configs.items():
             config_path = self.config_dir / f"{config_name}_config.json"
