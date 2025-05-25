@@ -1,3 +1,4 @@
+# strategies/bollong.py - FIXED VERSION
 import json
 import logging
 from typing import Dict, List, Tuple, Any, Optional
@@ -6,9 +7,11 @@ import pandas as pd
 
 from strategies import register_strategy
 from strategies.base_strategy import BaseStrategy
+from utils.indicator_utils import calculate_bollinger_bands  # 🚀 Use unified version
 
 # Logger configureren
 logger = logging.getLogger(__name__)
+
 
 def calculate_atr(df: pd.DataFrame, window: int = 14) -> Tuple[pd.Series, pd.Series]:
     """
@@ -37,7 +40,9 @@ def calculate_atr(df: pd.DataFrame, window: int = 14) -> Tuple[pd.Series, pd.Ser
 
     return atr, tr
 
-def calculate_adx(df: pd.DataFrame, window: int = 14, tr: Optional[pd.Series] = None) -> pd.Series:
+
+def calculate_adx(df: pd.DataFrame, window: int = 14,
+                  tr: Optional[pd.Series] = None) -> pd.Series:
     """
     Bereken Average Directional Index (ADX).
 
@@ -74,89 +79,6 @@ def calculate_adx(df: pd.DataFrame, window: int = 14, tr: Optional[pd.Series] = 
 
     return adx
 
-def calculate_bollinger_bands(data: pd.Series, window: int = 20, std_dev: float = 1.5,
-                              min_periods: Optional[int] = None) -> Tuple[pd.Series, pd.Series, pd.Series]:
-    """
-    Bereken Bollinger Bands met verbeterde foutafhandeling en type hints.
-
-    Args:
-        data (pd.Series): Input prijsserie
-        window (int, optional): Rolvenster voor berekening. Defaults to 20.
-        std_dev (float, optional): Aantal standaarddeviaties. Defaults to 1.5.
-        min_periods (int, optional): Minimum aantal perioden voor berekening. Defaults to window.
-
-    Returns:
-        Tuple van (upper band, midden band (SMA), lower band)
-
-    Raises:
-        TypeError: Als input geen pandas Series is
-        ValueError: Als window of std_dev ongeldig is
-    """
-    # Input validatie
-    if not isinstance(data, pd.Series):
-        raise TypeError(f"Input moet een pandas Series zijn, niet {type(data)}")
-
-    if window <= 0:
-        raise ValueError(f"Window moet positief zijn, niet {window}")
-
-    if std_dev <= 0:
-        raise ValueError(f"Standaarddeviatie moet positief zijn, niet {std_dev}")
-
-    # Gebruik min_periods om berekening aan te passen
-    min_periods = min_periods or window
-
-    try:
-        # Bereken Bollinger Bands met verbeterde rolling window
-        rolling_mean = data.rolling(window=window, min_periods=min_periods).mean()
-        rolling_std = data.rolling(window=window, min_periods=min_periods).std()
-
-        upper_band = rolling_mean + (rolling_std * std_dev)
-        lower_band = rolling_mean - (rolling_std * std_dev)
-
-        # Log details van de berekening
-        logger.info(f"Bollinger Bands berekend: "
-                    f"window={window}, std_dev={std_dev}, min_periods={min_periods}")
-
-        return upper_band, rolling_mean, lower_band
-
-    except Exception as e:
-        logger.error(f"Fout bij berekenen Bollinger Bands: {e}")
-        raise
-
-class RiskManager:
-    """
-    Risk management class to ensure compliance with FTMO rules and manage portfolio risk.
-    """
-
-    def __init__(self, confidence_level: float = 0.95, max_risk: float = 0.01,
-                 max_daily_loss_percent: float = 0.05, max_total_loss_percent: float = 0.10,
-                 correlated_symbols: Optional[Dict[str, list]] = None):
-        """
-        Initialize the RiskManager with risk parameters.
-
-        Args:
-            confidence_level (float): Confidence level for VaR calculation.
-            max_risk (float): Maximum risk per trade as a percentage of portfolio.
-            max_daily_loss_percent (float): Maximum daily loss percentage (e.g., 0.05 for 5%).
-            max_total_loss_percent (float): Maximum total loss percentage (e.g., 0.10 for 10%).
-            correlated_symbols (Dict[str, list], optional): Dictionary of correlated symbols.
-        """
-        self.confidence_level = confidence_level
-        self.max_risk = max_risk
-        self.max_daily_loss_percent = max_daily_loss_percent
-        self.max_total_loss_percent = max_total_loss_percent
-        self.correlated_symbols = correlated_symbols or {}
-        self.var_cache = {}
-
-    def calculate_position_size(self, capital: float, returns: pd.Series,
-                                pip_value: float, symbol: Optional[str] = None,
-                                open_positions: Optional[Dict[str, int]] = None) -> float:
-        """
-        Simplified version for this example
-        """
-        risk_amount = capital * self.max_risk
-        position_size = risk_amount / (capital * 0.01)
-        return position_size
 
 @register_strategy
 class BollongStrategy(BaseStrategy):
@@ -175,7 +97,8 @@ class BollongStrategy(BaseStrategy):
                  trading_hours: Tuple[int, int] = (9, 17), min_adx: float = 20,
                  use_adx_filter: bool = False, confidence_level: float = 0.95):
         super().__init__()
-        # Sla het symbool op als een klasse-attribuut
+
+        # Core parameters
         self.symbol: str = symbol
         self.window: int = window
         self.std_dev: float = std_dev
@@ -201,6 +124,8 @@ class BollongStrategy(BaseStrategy):
         self.use_adx_filter: bool = use_adx_filter
         self.confidence_level: float = confidence_level
 
+        logger.info(f"BollongStrategy initialized: window={window}, std_dev={std_dev}")
+
     def validate_parameters(self) -> bool:
         """Controleer of alle parameters geldig zijn."""
         if self.window < 5:
@@ -218,96 +143,107 @@ class BollongStrategy(BaseStrategy):
     def _calculate_stop(self, df: pd.DataFrame, atr: pd.Series, method: str,
                         mult_key: str, fixed_key: str) -> pd.Series:
         """Bereken stop-waarde."""
-        return self.__dict__[mult_key] * atr / df[
-            'close'] if method == "atr_based" else pd.Series(self.__dict__[fixed_key],
-                                                             index=df.index)
+        if method == "atr_based":
+            return self.__dict__[mult_key] * atr / df['close']
+        else:
+            return pd.Series(self.__dict__[fixed_key], index=df.index)
 
-    def generate_signals(self, df: pd.DataFrame, current_capital: Optional[float] = None) -> Tuple[
+    def generate_signals(self, df: pd.DataFrame,
+                         current_capital: Optional[float] = None) -> Tuple[
         pd.Series, pd.Series, pd.Series]:
         """Genereer trading signalen."""
+
+        logger.info(f"Generating Bollinger signals for {len(df)} bars")
+
         has_datetime_index: bool = hasattr(df.index, 'hour')
 
-        risk_manager: RiskManager = RiskManager(confidence_level=self.confidence_level,
-                                                max_risk=self.risk_per_trade)
-        returns: pd.Series = df['close'].pct_change().dropna()
-        from config import INITIAL_CAPITAL, get_pip_value  # Fix 2: gebruik get_pip_value functie
-        size: float = risk_manager.calculate_position_size(
-            INITIAL_CAPITAL,
-            returns,
-            pip_value=get_pip_value(self.symbol)  # Gebruik het symbool attribuut
-        )
+        # 🚀 FIXED: Simple risk calculation without complex imports
+        # No need for complex risk manager in signal generation
 
-        # Bereken Bollinger Bands met self.window en self.std_dev
+        # Bereken Bollinger Bands - NU UNIFIED
         upper_band, sma, lower_band = calculate_bollinger_bands(df['close'],
-                                                                window=self.window,
-                                                                std_dev=self.std_dev)
+            window=self.window, std_dev=self.std_dev)
 
-        # Bereken de bandbreedte
+        # Bereken de bandbreedte en positie
         band_width = upper_band - lower_band
         price_position = (df['close'] - lower_band) / band_width
-        entries = price_position > 0.7  # Prijs in de bovenste 30% van de bandbreedte (was 0.8)
+
+        # 🎯 Entry signalen: prijs in bovenste deel van Bollinger Bands
+        entries = price_position > 0.7  # Prijs in de bovenste 30% van de bandbreedte
 
         # Volatiliteitsfilter: geen nieuwe signalen als ATR te hoog is
         atr, tr = calculate_atr(df)
         avg_atr = atr.rolling(window=20).mean()
-        volatility_filter = atr < avg_atr * 3.0  # Relaxed from 2.0 to 3.0
+        volatility_filter = atr < avg_atr * 3.0  # Relaxed volatility filter
         entries = entries & volatility_filter
 
-        # Bear market-filter: alleen signalen in een bull market
-        long_sma = df['close'].rolling(window=100).mean()  # Increased from 50 to 100
-        bull_market = df[
-                          'close'] > long_sma  # Alleen signalen als prijs boven lange SMA
+        # Bull market filter: alleen signalen boven lange SMA
+        long_sma = df['close'].rolling(window=100).mean()
+        bull_market = df['close'] > long_sma
         entries = entries & bull_market
 
-        logger.info(f"Gemiddeld aantal signalen: {entries.sum()} over {len(df)} bars")
-
-        # Bestaande filters blijven intact
-        if self.use_volume_filter and 'volume' in df.columns:
-            avg_volume: pd.Series = df['volume'].rolling(
+        # Volume filter (optioneel)
+        if self.use_volume_filter and 'tick_volume' in df.columns:
+            avg_volume = df['tick_volume'].rolling(
                 window=self.volume_filter_periods).mean()
-            volume_filter: pd.Series = df[
-                                           'volume'] > avg_volume * self.volume_filter_mult
+            volume_filter = df['tick_volume'] > avg_volume * self.volume_filter_mult
             entries = entries & volume_filter
 
+        # ADX filter (optioneel)
         if self.use_adx_filter:
-            atr, tr = calculate_atr(df)
-            adx: pd.Series = calculate_adx(df, tr=tr)
-            adx_filter: pd.Series = adx > self.min_adx
+            adx = calculate_adx(df, tr=tr)
+            adx_filter = adx > self.min_adx
             entries = entries & adx_filter
 
+        # Time filter (optioneel)
         if self.use_time_filter:
             if not has_datetime_index:
                 raise ValueError("Time filter vereist een datetime-index")
-            time_filter: pd.Series = df.index.hour.isin(
+            time_filter = df.index.hour.isin(
                 range(self.trading_hours[0], self.trading_hours[1] + 1))
             entries = entries & time_filter
 
-        # Bereken stops met strakkere waarden
+        # Bereken stops
         atr, tr = calculate_atr(df)
-        sl_stop: pd.Series = self._calculate_stop(df, atr, self.sl_method,
-                                                  'sl_atr_mult', 'sl_fixed_percent')
-        tp_stop: pd.Series = self._calculate_stop(df, atr, self.tp_method,
-                                                  'tp_atr_mult', 'tp_fixed_percent')
+        sl_stop = self._calculate_stop(df, atr, self.sl_method, 'sl_atr_mult',
+                                       'sl_fixed_percent')
+        tp_stop = self._calculate_stop(df, atr, self.tp_method, 'tp_atr_mult',
+                                       'tp_fixed_percent')
 
+        # Trailing stop handling
         if self.use_trailing_stop:
-            self.sl_trail = True
-            trail_stop: pd.Series = self._calculate_stop(df, atr,
-                                                         self.trailing_stop_method,
-                                                         'trailing_stop_atr_mult',
-                                                         'trailing_stop_percent')
+            trail_stop = self._calculate_stop(df, atr, self.trailing_stop_method,
+                                              'trailing_stop_atr_mult',
+                                              'trailing_stop_percent')
             sl_stop = trail_stop.clip(0.001, 0.999)
             if self.trailing_activation_percent > 0:
                 logger.info(
-                    f"Trailing stop activeert na {self.trailing_activation_percent:.2%} prijsstijging")
+                    f"Trailing stop activeert na {self.trailing_activation_percent:.2%}")
 
-        sl_stop = sl_stop.fillna(0.015)  # Strakkere stop-loss: 1,5%
-        tp_stop = tp_stop.fillna(0.09)  # Kleinere take-profit: 3%
-        logger.info(f"Aantal LONG signalen: {entries.sum()}")
+        # Fill NaN values with defaults
+        sl_stop = sl_stop.fillna(self.sl_fixed_percent)
+        tp_stop = tp_stop.fillna(self.tp_fixed_percent)
+
+        # Convert to integer signals
+        entries = entries.fillna(False).astype(int)
+
+        # Log results
+        num_signals = entries.sum()
+        logger.info(f"Bollinger Strategy: {num_signals} signals generated")
+        logger.info(f"Signal rate: {num_signals / len(df) * 100:.1f}% of bars")
+
         return entries, sl_stop, tp_stop
-
 
     @classmethod
     def get_performance_metrics(cls) -> List[str]:
         """Definieer performance metrics."""
         return ["sharpe_ratio", "calmar_ratio", "sortino_ratio", "win_rate",
                 "total_return", "max_drawdown"]
+
+    @classmethod
+    def get_default_params(cls, timeframe: str = "H1") -> Dict[str, List[Any]]:
+        """Get default parameters for optimization."""
+        return {'window': [20, 30, 50, 60], 'std_dev': [1.5, 2.0, 2.5, 3.0],
+            'sl_fixed_percent': [0.015, 0.02, 0.025],
+            'tp_fixed_percent': [0.03, 0.04, 0.05],
+            'risk_per_trade': [0.01, 0.015, 0.02]}
