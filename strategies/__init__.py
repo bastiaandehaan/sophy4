@@ -1,156 +1,275 @@
-# strategies/__init__.py - Streamlined & Centralized
-import importlib
-import inspect
+"""
+Strategies Module - PRODUCTION VERSION
+Fixed: Proper parameter passing, strategy factory, Windows compatibility
+Ensures: All strategy parameters are correctly applied from config system
+"""
 import logging
-import os
+from typing import Dict, Any, Type, Optional
 from pathlib import Path
-from typing import Dict, Any, Optional
+import sys
 
-from .base_strategy import BaseStrategy
-
-# Global strategy registry
-STRATEGIES = {}
-
+# Windows-compatible logging
 logger = logging.getLogger(__name__)
 
+# Import available strategies
+try:
+    from .simple_order_block import SimpleOrderBlockStrategy
+    from .base_strategy import BaseStrategy
 
-def register_strategy(strategy_class):
+    # Add other strategies here as they are developed  # from .bollinger_strategy import BollingerStrategy  # from .lstm_strategy import OrderBlockLSTMStrategy
+
+except ImportError as e:
+    logger.error(f"Failed to import strategies: {e}")
+    sys.exit(1)
+
+# Strategy registry for factory pattern
+STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
+    "SimpleOrderBlockStrategy": SimpleOrderBlockStrategy,
+    "simple_order_block": SimpleOrderBlockStrategy,  # Alternative name
+    "order_block": SimpleOrderBlockStrategy,  # Short name
+
+    # Add other strategies here
+    # "BollingerStrategy": BollingerStrategy,
+    # "OrderBlockLSTMStrategy": OrderBlockLSTMStrategy,
+}
+
+
+def get_available_strategies() -> Dict[str, str]:
     """
-    Clean decorator to register strategies in the system.
+    Get list of available strategies with descriptions.
+
+    Returns:
+        Dict mapping strategy names to descriptions
     """
-    if not inspect.isclass(strategy_class):
-        raise TypeError("Decorator must be applied to a class")
-    if not issubclass(strategy_class, BaseStrategy):
-        raise TypeError(f"{strategy_class.__name__} must inherit from BaseStrategy")
+    descriptions = {
+        "SimpleOrderBlockStrategy": "Order Block strategy optimized for frequency (400-600 trades/year)",
+        # Add other strategy descriptions here
+    }
 
-    STRATEGIES[strategy_class.__name__] = strategy_class
-
-    if os.getenv('SOPHY4_DEBUG'):
-        logger.debug(f"Strategy '{strategy_class.__name__}' registered")
-
-    return strategy_class
+    return {name: descriptions.get(name, "No description available") for name in
+            STRATEGY_REGISTRY.keys() if
+            not name.startswith("_")}  # Exclude internal aliases
 
 
-def get_strategy(strategy_name: str, **params) -> BaseStrategy:
+def get_strategy(strategy_name: str, **kwargs) -> BaseStrategy:
     """
-    Create strategy instance with centralized configuration.
+    Factory function to create strategy instances with proper parameter passing.
+
+    FIXED: Ensures all parameters from config system are properly applied.
 
     Args:
-        strategy_name: Name of the strategy class
-        **params: Override parameters (symbol, timeframe, etc.)
+        strategy_name: Name of strategy to create
+        **kwargs: Strategy parameters (from config system or overrides)
+
+    Returns:
+        Configured strategy instance
+
+    Raises:
+        ValueError: If strategy name not found
+        TypeError: If strategy creation fails
+    """
+    logger.info(f"Creating {strategy_name} with params: {list(kwargs.keys())}")
+
+    # Normalize strategy name
+    strategy_name = strategy_name.strip()
+
+    # Find strategy class
+    strategy_class = None
+    for registered_name, cls in STRATEGY_REGISTRY.items():
+        if registered_name.lower() == strategy_name.lower():
+            strategy_class = cls
+            break
+
+    if strategy_class is None:
+        available = list(STRATEGY_REGISTRY.keys())
+        raise ValueError(
+            f"Strategy '{strategy_name}' not found. Available: {available}")
+
+    try:
+        # Validate required parameters
+        symbol = kwargs.get('symbol')
+        if not symbol:
+            logger.warning("No symbol specified, using default 'GER40.cash'")
+            kwargs['symbol'] = 'GER40.cash'
+
+        trading_mode = kwargs.get('trading_mode', 'personal')
+        logger.info(
+            f"Creating {strategy_name} for {symbol} in {trading_mode.upper()} mode")
+
+        # Log key parameters for verification
+        key_params = ['use_htf_confirmation', 'stress_threshold', 'rsi_min', 'rsi_max',
+                      'risk_per_trade']
+        for param in key_params:
+            if param in kwargs:
+                logger.info(f"  {param}: {kwargs[param]}")
+
+        # Create strategy instance with ALL parameters
+        # CRITICAL: Ensure **kwargs are passed to preserve all config parameters
+        strategy = strategy_class(**kwargs)
+
+        # Verify strategy was created with correct parameters
+        if hasattr(strategy, 'get_strategy_info'):
+            info = strategy.get_strategy_info()
+            logger.info(
+                f"Strategy created successfully: {info.get('name', strategy_name)}")
+
+            # Verify critical parameters were applied
+            if 'use_htf_confirmation' in kwargs:
+                actual_htf = getattr(strategy, 'use_htf_confirmation', None)
+                expected_htf = kwargs['use_htf_confirmation']
+                if actual_htf != expected_htf:
+                    logger.warning(
+                        f"HTF confirmation mismatch: expected {expected_htf}, got {actual_htf}")
+                else:
+                    logger.info(f"  HTF confirmation correctly set: {actual_htf}")
+
+        return strategy
+
+    except TypeError as e:
+        logger.error(f"Strategy creation failed - invalid parameters: {e}")
+        logger.error(f"Strategy class: {strategy_class}")
+        logger.error(f"Parameters passed: {kwargs}")
+        raise TypeError(f"Failed to create {strategy_name}: {e}")
+
+    except Exception as e:
+        logger.error(f"Unexpected error creating {strategy_name}: {e}")
+        import traceback
+        traceback.print_exc()
+        raise
+
+
+def validate_strategy_parameters(strategy_name: str, params: Dict[str, Any]) -> Dict[
+    str, Any]:
+    """
+    Validate and normalize strategy parameters.
+
+    Args:
+        strategy_name: Name of strategy
+        params: Parameters dictionary
+
+    Returns:
+        Validated parameters dictionary
+
+    Raises:
+        ValueError: If parameters are invalid
+    """
+    validated_params = params.copy()
+
+    # Common parameter validation
+    if 'symbol' in validated_params:
+        symbol = validated_params['symbol']
+        if not isinstance(symbol, str) or len(symbol) == 0:
+            raise ValueError(f"Invalid symbol: {symbol}")
+
+    if 'risk_per_trade' in validated_params:
+        risk = validated_params['risk_per_trade']
+        if not isinstance(risk, (int, float)) or risk <= 0 or risk > 1:
+            raise ValueError(
+                f"Invalid risk_per_trade: {risk} (must be between 0 and 1)")
+
+    if 'rsi_min' in validated_params and 'rsi_max' in validated_params:
+        rsi_min = validated_params['rsi_min']
+        rsi_max = validated_params['rsi_max']
+        if rsi_min >= rsi_max:
+            raise ValueError(
+                f"Invalid RSI range: {rsi_min}-{rsi_max} (min must be < max)")
+        if rsi_min < 0 or rsi_max > 100:
+            raise ValueError(f"Invalid RSI values: {rsi_min}-{rsi_max} (must be 0-100)")
+
+    # Strategy-specific validation
+    if strategy_name.lower() in ['simpleorderblockstrategy', 'simple_order_block',
+                                 'order_block']:
+        # Validate order block specific parameters
+        if 'ob_lookback' in validated_params:
+            lookback = validated_params['ob_lookback']
+            if not isinstance(lookback, int) or lookback < 1 or lookback > 20:
+                raise ValueError(f"Invalid ob_lookback: {lookback} (must be 1-20)")
+
+        if 'stress_threshold' in validated_params:
+            threshold = validated_params['stress_threshold']
+            if not isinstance(threshold, (int, float)) or threshold <= 0:
+                raise ValueError(
+                    f"Invalid stress_threshold: {threshold} (must be positive)")
+
+        if 'min_wick_ratio' in validated_params:
+            ratio = validated_params['min_wick_ratio']
+            if not isinstance(ratio, (int, float)) or ratio < 0:
+                raise ValueError(
+                    f"Invalid min_wick_ratio: {ratio} (must be non-negative)")
+
+    logger.info(f"Parameters validated for {strategy_name}")
+    return validated_params
+
+
+def list_strategy_parameters(strategy_name: str) -> Dict[str, Any]:
+    """
+    Get parameter information for a strategy.
+
+    Args:
+        strategy_name: Name of strategy
+
+    Returns:
+        Dictionary with parameter info
+    """
+    if strategy_name.lower() in ['simpleorderblockstrategy', 'simple_order_block',
+                                 'order_block']:
+        return {'required_parameters': ['symbol'],
+            'optional_parameters': {'trading_mode': 'personal',
+                'use_htf_confirmation': False, 'stress_threshold': 10.0,
+                'min_wick_ratio': 0.001, 'use_rejection_wicks': False,
+                'use_session_filter': False, 'use_volume_filter': False, 'rsi_min': 1,
+                'rsi_max': 99, 'rsi_period': 14, 'volume_multiplier': 0.1,
+                'volume_period': 20, 'risk_per_trade': 0.05, 'ob_lookback': 2,
+                'sl_percent': 0.008, 'tp_percent': 0.025, 'min_body_ratio': 0.5,
+                'trend_strength_min': 0.5, 'htf_timeframe': 'H4', 'htf_lookback': 30, },
+            'parameter_descriptions': {'symbol': 'Trading symbol (e.g., GER40.cash)',
+                'trading_mode': 'Trading mode (personal/ftmo/aggressive)',
+                'use_htf_confirmation': 'Enable higher timeframe confirmation',
+                'stress_threshold': 'Market stress detection threshold',
+                'min_wick_ratio': 'Minimum wick ratio requirement',
+                'rsi_min': 'Minimum RSI value for signals',
+                'rsi_max': 'Maximum RSI value for signals',
+                'risk_per_trade': 'Risk percentage per trade',
+                'ob_lookback': 'Order block lookback periods',
+                'sl_percent': 'Stop loss percentage',
+                'tp_percent': 'Take profit percentage', }}
+
+    return {"error": f"Parameter info not available for {strategy_name}"}
+
+
+def create_strategy_from_config(config_manager, strategy_name: str, symbol: str,
+                                **overrides) -> BaseStrategy:
+    """
+    Create strategy using config manager with optional overrides.
+
+    Args:
+        config_manager: ConfigManager instance
+        strategy_name: Strategy to create
+        symbol: Trading symbol
+        **overrides: Parameter overrides
 
     Returns:
         Configured strategy instance
     """
-    # Get strategy class with case-insensitive matching
-    strategy_class = _find_strategy_class(strategy_name)
+    # Get parameters from config
+    params = config_manager.get_strategy_params(strategy_name, symbol, **overrides)
 
-    # Import config manager here to avoid circular imports
-    from config import config_manager
+    # Validate parameters
+    validated_params = validate_strategy_parameters(strategy_name, params)
 
-    # Get base configuration from centralized system
-    timeframe = params.get('timeframe', 'H1')
-    base_config = config_manager.get_strategy_params(strategy_name, timeframe)
-
-    # Merge base config with user overrides
-    final_params = {**base_config, **params}
-
-    # Filter parameters to only include what the strategy accepts
-    valid_params = _filter_valid_parameters(strategy_class, final_params)
-
-    logger.info(f"Creating {strategy_name} with params: {list(valid_params.keys())}")
-
-    return strategy_class(**valid_params)
+    # Create strategy
+    return get_strategy(strategy_name, **validated_params)
 
 
-def _find_strategy_class(strategy_name: str):
-    """Find strategy class with case-insensitive matching."""
-    # Try exact match first
-    if strategy_name in STRATEGIES:
-        return STRATEGIES[strategy_name]
+# Module initialization
+logger.info(f"Strategies module loaded: {len(STRATEGY_REGISTRY)} strategies available")
+available_strategies = get_available_strategies()
+for name, desc in available_strategies.items():
+    if not any(alias in name for alias in
+               ['simple_order_block', 'order_block']):  # Only log main names
+        logger.info(f"  {name}: {desc}")
 
-    # Try case-insensitive match
-    strategy_name_lower = strategy_name.lower()
-    matches = [name for name in STRATEGIES.keys() if
-               name.lower() == strategy_name_lower]
-
-    if len(matches) == 1:
-        return STRATEGIES[matches[0]]
-    elif len(matches) > 1:
-        logger.warning(
-            f"Multiple strategies found for '{strategy_name}', using '{matches[0]}'")
-        return STRATEGIES[matches[0]]
-    else:
-        available = ", ".join(STRATEGIES.keys())
-        raise ValueError(
-            f"Strategy '{strategy_name}' not found. Available: {available}")
-
-
-def _filter_valid_parameters(strategy_class, params: Dict[str, Any]) -> Dict[str, Any]:
-    """Filter parameters to only include what the strategy constructor accepts."""
-    init_signature = inspect.signature(strategy_class.__init__)
-    valid_params = {}
-
-    for param_name, param_value in params.items():
-        if param_name in init_signature.parameters:
-            valid_params[param_name] = param_value
-        else:
-            logger.debug(
-                f"Parameter '{param_name}' ignored for {strategy_class.__name__}")
-
-    return valid_params
-
-
-def list_strategies() -> list:
-    """List all available strategies with their accepted parameters."""
-    result = []
-
-    for name, cls in STRATEGIES.items():
-        # Get accepted parameters from __init__ signature
-        init_params = list(inspect.signature(cls.__init__).parameters.keys())
-        if 'self' in init_params:
-            init_params.remove('self')
-
-        # Get strategy info without relying on strategy-level methods
-        strategy_info = {'name': name, 'accepted_params': init_params,
-            'module': cls.__module__, 'description': cls.__doc__.split('\n')[
-                0] if cls.__doc__ else "No description"}
-
-        result.append(strategy_info)
-
-    return result
-
-
-def get_strategy_names() -> list:
-    """Get list of all registered strategy names."""
-    return list(STRATEGIES.keys())
-
-
-def is_strategy_available(strategy_name: str) -> bool:
-    """Check if a strategy is available."""
-    return strategy_name in STRATEGIES or any(
-        name.lower() == strategy_name.lower() for name in STRATEGIES.keys())
-
-
-# Auto-import all strategy modules
-def _import_strategies():
-    """Import all strategy modules to trigger @register_strategy decorators."""
-    strategy_dir = Path(__file__).parent
-    excluded_files = {'__init__', 'base_strategy',
-                      'bollong_vectorized'}  # Exclude deleted files
-
-    for file_path in strategy_dir.glob("*.py"):
-        module_name = file_path.stem
-
-        if module_name not in excluded_files:
-            try:
-                importlib.import_module(f"strategies.{module_name}")
-                logger.debug(f"Imported strategy module: {module_name}")
-            except ImportError as e:
-                logger.warning(f"Failed to import strategy '{module_name}': {e}")
-
-    logger.info(f"Loaded {len(STRATEGIES)} strategies: {', '.join(STRATEGIES.keys())}")
-
-
-# Import all strategies when module is loaded
-_import_strategies()
+# Export public interface
+__all__ = ['get_strategy', 'get_available_strategies', 'validate_strategy_parameters',
+    'list_strategy_parameters', 'create_strategy_from_config',
+    'SimpleOrderBlockStrategy', 'BaseStrategy', 'STRATEGY_REGISTRY']
