@@ -1,4 +1,4 @@
-# config.py - Unified Configuration System
+# config.py - UPDATED FOR PERSONAL TRADING (Not FTMO)
 import logging
 import json
 import os
@@ -29,23 +29,23 @@ class SymbolConfig:
 
 @dataclass
 class TradingConfig:
-    """Trading-specific configuration."""
-    initial_capital: float = 10000.0
+    """Trading-specific configuration - UPDATED FOR PERSONAL TRADING."""
+    initial_capital: float = 100000.0  # Personal account size
     default_symbol: str = "GER40.cash"
     default_timeframe: str = "H1"
     default_lookback_days: int = 1095
 
-    # Risk parameters - SINGLE SOURCE OF TRUTH
-    max_risk_per_trade: float = 0.01  # 1% base risk
-    max_daily_loss: float = 0.05
-    max_total_loss: float = 0.10
-    max_portfolio_heat: float = 0.06
+    # 🚀 PERSONAL TRADING RISK (NOT FTMO)
+    max_risk_per_trade: float = 0.05  # 5% vs 1.5% FTMO
+    max_daily_loss: float = 0.15  # 15% vs 5% FTMO
+    max_total_loss: float = 0.25  # 25% vs 10% FTMO
+    max_portfolio_heat: float = 0.20  # 20% vs 6% FTMO
 
     # Execution parameters
     fees: float = 0.00005
     slippage: float = 0.0001
 
-    # FTMO compliance
+    # FTMO compliance (for comparison only)
     ftmo_daily_loss_limit: float = 0.05
     ftmo_total_loss_limit: float = 0.10
     ftmo_profit_target: float = 0.10
@@ -53,27 +53,45 @@ class TradingConfig:
 
 @dataclass
 class StrategyDefaults:
-    """Default strategy parameters by timeframe."""
+    """🎯 FREQUENCY-OPTIMIZED Strategy defaults."""
     timeframe: str
 
-    # Bollinger Bands defaults
-    bb_window_range: List[int] = field(default_factory=lambda: [20, 30, 50])
-    bb_std_dev_range: List[float] = field(default_factory=lambda: [1.5, 2.0, 2.5])
+    # 🚀 FILTER CONTROL - PERSONAL TRADING DEFAULTS
+    use_htf_confirmation: bool = False  # 🔑 DISABLED - Key bottleneck removed
+    stress_threshold: float = 4.0  # 🔑 RELAXED - vs 2.2 FTMO
+    min_wick_ratio: float = 0.05  # 🔑 MINIMAL - vs 0.3 FTMO
+    use_rejection_wicks: bool = False  # 🔑 DISABLED - no wick requirement
+    use_session_filter: bool = False  # 🔑 DISABLED - 24/7 trading
 
-    # Risk management defaults
-    sl_percent_range: List[float] = field(default_factory=lambda: [0.01, 0.015, 0.02])
-    tp_percent_range: List[float] = field(default_factory=lambda: [0.03, 0.04, 0.05])
+    # RSI range - VERY WIDE
+    rsi_min: int = 5  # vs 25 FTMO
+    rsi_max: int = 95  # vs 75 FTMO
 
-    # Order block defaults
-    ob_lookback_range: List[int] = field(default_factory=lambda: [5, 10, 15])
-    ob_strength_range: List[float] = field(default_factory=lambda: [1.5, 2.0, 2.5])
+    # Volume filter - RELAXED
+    volume_multiplier: float = 0.8  # vs 1.1 FTMO
+    use_volume_filter: bool = False  # Optional volume filter
 
-    # LSTM defaults
-    lstm_threshold_range: List[float] = field(default_factory=lambda: [0.3, 0.4, 0.5])
+    # Bollinger Bands defaults - WIDER RANGES
+    bb_window_range: List[int] = field(default_factory=lambda: [15, 20, 30, 50])
+    bb_std_dev_range: List[float] = field(default_factory=lambda: [1.5, 2.0, 2.5, 3.0])
 
-    # Risk defaults
+    # Risk management - PERSONAL TRADING
+    sl_percent_range: List[float] = field(
+        default_factory=lambda: [0.008, 0.01, 0.015, 0.02])
+    tp_percent_range: List[float] = field(
+        default_factory=lambda: [0.025, 0.03, 0.04, 0.05])
+
+    # Order block defaults - RELAXED
+    ob_lookback_range: List[int] = field(default_factory=lambda: [3, 5, 7, 10])
+    ob_strength_range: List[float] = field(default_factory=lambda: [1.2, 1.5, 2.0])
+
+    # LSTM defaults - RELAXED THRESHOLD
+    lstm_threshold_range: List[float] = field(
+        default_factory=lambda: [0.25, 0.35, 0.45])
+
+    # Risk defaults - PERSONAL TRADING
     risk_per_trade_range: List[float] = field(
-        default_factory=lambda: [0.005, 0.01, 0.015])
+        default_factory=lambda: [0.03, 0.05, 0.07])
 
     # Trailing stop defaults
     trailing_stop_range: List[float] = field(
@@ -102,7 +120,7 @@ class LoggingConfig:
 
 
 class UnifiedConfigManager:
-    """Centralized configuration manager - SINGLE SOURCE OF TRUTH."""
+    """Centralized configuration manager - PERSONAL TRADING OPTIMIZED."""
 
     def __init__(self, environment: Environment = Environment.DEVELOPMENT):
         self.environment = environment
@@ -130,7 +148,8 @@ class UnifiedConfigManager:
     def _load_configs(self) -> None:
         """Load configuration from files."""
         config_files = {'trading': 'trading_config.json',
-            'backtest': 'backtest_config.json', 'logging_config': 'logging_config.json'}
+                        'backtest': 'backtest_config.json',
+                        'logging_config': 'logging_config.json'}
 
         for config_name, filename in config_files.items():
             config_path = self.config_dir / filename
@@ -140,8 +159,7 @@ class UnifiedConfigManager:
                         data = json.load(f)
                         self._update_config(config_name, data)
                 except Exception as e:
-                    print(
-                        f"Warning: Failed to load {filename}: {e}")  # Use print instead of logger
+                    print(f"Warning: Failed to load {filename}: {e}")
             else:
                 # Create default config file
                 self._save_default_config(config_name, config_path)
@@ -188,15 +206,16 @@ class UnifiedConfigManager:
 
             log_file = log_dir / f"sophy4_{self.environment.value}.log"
             file_handler = RotatingFileHandler(log_file,
-                maxBytes=self.logging_config.max_file_size_mb * 1024 * 1024,
-                backupCount=self.logging_config.backup_count)
+                                               maxBytes=self.logging_config.max_file_size_mb * 1024 * 1024,
+                                               backupCount=self.logging_config.backup_count)
             file_handler.setLevel(level)
             file_handler.setFormatter(formatter)
             root_logger.addHandler(file_handler)
 
     def _initialize_symbols(self) -> None:
-        """Initialize symbol configurations."""
-        default_symbols = ["EURUSD", "GER40.cash", "US30.cash", "XAUUSD", "GBPUSD"]
+        """Initialize symbol configurations - MULTI-SYMBOL READY."""
+        # 🚀 TARGET SYMBOLS FOR 250+ TRADES/YEAR
+        default_symbols = ["GER40.cash", "XAUUSD", "EURUSD", "US30.cash", "GBPUSD"]
 
         # Try to get symbols from MT5
         mt5_symbols = self._fetch_mt5_symbols(default_symbols)
@@ -206,11 +225,16 @@ class UnifiedConfigManager:
             symbol_info = self._get_mt5_symbol_info(symbol)
             if symbol_info:
                 self.symbols[symbol] = SymbolConfig(symbol=symbol,
-                    pip_value=symbol_info.get('pip_value', 10.0),
-                    contract_size=symbol_info.get('contract_size', 1.0),
-                    tick_size=symbol_info.get('tick_size', 0.1),
-                    volume_min=symbol_info.get('volume_min', 0.01),
-                    volume_max=symbol_info.get('volume_max', 100.0))
+                                                    pip_value=symbol_info.get(
+                                                        'pip_value', 10.0),
+                                                    contract_size=symbol_info.get(
+                                                        'contract_size', 1.0),
+                                                    tick_size=symbol_info.get(
+                                                        'tick_size', 0.1),
+                                                    volume_min=symbol_info.get(
+                                                        'volume_min', 0.01),
+                                                    volume_max=symbol_info.get(
+                                                        'volume_max', 100.0))
             else:
                 # Fallback configuration
                 self.symbols[symbol] = SymbolConfig(symbol=symbol)
@@ -226,8 +250,7 @@ class UnifiedConfigManager:
                 mt5.shutdown()
                 return available_symbols if available_symbols else default_symbols
         except Exception as e:
-            print(
-                f"Warning: Could not load symbols from MT5: {e}")  # Use print instead of logger
+            print(f"Warning: Could not load symbols from MT5: {e}")
 
         return default_symbols
 
@@ -240,46 +263,59 @@ class UnifiedConfigManager:
                     result = {
                         'pip_value': getattr(symbol_info, 'trade_tick_value', 10.0),
                         'contract_size': symbol_info.trade_contract_size,
-                        'tick_size': getattr(symbol_info, 'point', 0.0001),                        'volume_min': symbol_info.volume_min,
+                        'tick_size': getattr(symbol_info, 'point', 0.0001),
+                        'volume_min': symbol_info.volume_min,
                         'volume_max': symbol_info.volume_max}
                     mt5.shutdown()
                     return result
                 mt5.shutdown()
         except Exception as e:
-            print(
-                f"Warning: Error getting symbol info for {symbol}: {e}")  # Use print instead of logger
+            print(f"Warning: Error getting symbol info for {symbol}: {e}")
 
         return None
 
     def _initialize_strategy_defaults(self) -> None:
-        """Initialize strategy defaults by timeframe."""
-        # M5 defaults
+        """🚀 FREQUENCY-OPTIMIZED strategy defaults by timeframe."""
+
+        # M5 defaults - AGGRESSIVE FOR HIGH FREQUENCY
         self.strategy_defaults["M5"] = StrategyDefaults(timeframe="M5",
-            bb_window_range=[5, 10, 15, 20], bb_std_dev_range=[1.0, 1.5, 2.0],
-            sl_percent_range=[0.005, 0.01, 0.015], tp_percent_range=[0.01, 0.02, 0.03],
-            ob_lookback_range=[3, 5, 10], lstm_threshold_range=[0.2, 0.3, 0.4],
-            risk_per_trade_range=[0.005, 0.01],
-            trailing_stop_range=[0.005, 0.01, 0.015])
+            use_htf_confirmation=False,  # 🔑 DISABLED
+            stress_threshold=5.0,  # 🔑 VERY RELAXED
+            min_wick_ratio=0.02,  # 🔑 MINIMAL
+            use_rejection_wicks=False,  # 🔑 DISABLED
+            use_session_filter=False,  # 🔑 24/7 TRADING
+            rsi_min=3, rsi_max=97,  # 🔑 VERY WIDE
+            volume_multiplier=0.7,  # 🔑 VERY RELAXED
+            bb_window_range=[5, 10, 15, 20], sl_percent_range=[0.005, 0.008, 0.01],
+            tp_percent_range=[0.01, 0.015, 0.02], risk_per_trade_range=[0.03, 0.05])
 
-        # H1 defaults
+        # H1 defaults - PERSONAL TRADING OPTIMIZED
         self.strategy_defaults["H1"] = StrategyDefaults(timeframe="H1",
-            bb_window_range=[15, 20, 30, 50], bb_std_dev_range=[1.75, 2.0, 2.5],
-            sl_percent_range=[0.01, 0.015, 0.02, 0.025],
-            tp_percent_range=[0.03, 0.04, 0.05, 0.06],
-            ob_lookback_range=[5, 10, 15, 20], ob_strength_range=[1.5, 2.0, 2.5],
-            lstm_threshold_range=[0.35, 0.4, 0.45, 0.5],
-            risk_per_trade_range=[0.005, 0.0075, 0.01],
-            trailing_stop_range=[0.008, 0.01, 0.015])
+            use_htf_confirmation=False,  # 🔑 DISABLED - KEY FIX
+            stress_threshold=4.0,  # 🔑 RELAXED vs 2.2
+            min_wick_ratio=0.05,  # 🔑 MINIMAL vs 0.3
+            use_rejection_wicks=False,  # 🔑 DISABLED
+            use_session_filter=False,  # 🔑 24/7 TRADING
+            rsi_min=5, rsi_max=95,  # 🔑 WIDE vs 25-75
+            volume_multiplier=0.8,  # 🔑 RELAXED vs 1.1
+            bb_window_range=[15, 20, 30, 50],
+            sl_percent_range=[0.008, 0.01, 0.015, 0.02],
+            tp_percent_range=[0.025, 0.03, 0.04, 0.05],
+            risk_per_trade_range=[0.03, 0.05, 0.07]  # 🔑 PERSONAL RISK
+        )
 
-        # D1 defaults
+        # D1 defaults - RELAXED FOR SWING TRADING
         self.strategy_defaults["D1"] = StrategyDefaults(timeframe="D1",
-            bb_window_range=[20, 30, 40, 50, 60], bb_std_dev_range=[2.0, 2.5, 3.0],
-            sl_percent_range=[0.02, 0.03, 0.04, 0.05],
-            tp_percent_range=[0.05, 0.06, 0.08, 0.1],
-            ob_lookback_range=[10, 15, 20, 25], ob_strength_range=[2.0, 2.5, 3.0],
-            lstm_threshold_range=[0.4, 0.5, 0.6],
-            risk_per_trade_range=[0.005, 0.0075, 0.01],
-            trailing_stop_range=[0.015, 0.02, 0.025])
+            use_htf_confirmation=False,  # 🔑 DISABLED
+            stress_threshold=3.5,  # 🔑 RELAXED
+            min_wick_ratio=0.1,  # 🔑 RELAXED
+            use_rejection_wicks=False,  # 🔑 DISABLED
+            use_session_filter=False,  # 🔑 24/7 TRADING
+            rsi_min=10, rsi_max=90,  # 🔑 WIDE
+            volume_multiplier=0.9,  # 🔑 RELAXED
+            bb_window_range=[20, 30, 40, 50], sl_percent_range=[0.015, 0.02, 0.03],
+            tp_percent_range=[0.04, 0.05, 0.06],
+            risk_per_trade_range=[0.03, 0.05, 0.07])
 
     # UNIFIED API METHODS
     def get_symbol_config(self, symbol: str) -> SymbolConfig:
@@ -291,24 +327,33 @@ class UnifiedConfigManager:
         return self.get_symbol_config(symbol).pip_value
 
     def get_strategy_params(self, strategy_name: str, timeframe: str) -> Dict[str, Any]:
-        """Get strategy parameters for given timeframe - SINGLE SOURCE."""
+        """🚀 FREQUENCY-OPTIMIZED strategy parameters."""
         defaults = self.strategy_defaults.get(timeframe,
                                               self.strategy_defaults.get("H1"))
         symbol_config = self.get_symbol_config(self.trading.default_symbol)
 
-        # UNIFIED parameter set
-        params = {# Base trading config
+        # 🚀 PERSONAL TRADING PARAMETERS
+        params = {# Base trading config - PERSONAL ACCOUNT
             'symbol': self.trading.default_symbol,
             'initial_capital': self.trading.initial_capital,
-            'risk_per_trade': self.trading.max_risk_per_trade,
-            'max_daily_loss': self.trading.max_daily_loss,
-            'max_total_loss': self.trading.max_total_loss,
+            'risk_per_trade': self.trading.max_risk_per_trade,  # 5% vs 1.5%
+
+            # 🔑 FREQUENCY CONTROL FILTERS - DISABLED/RELAXED
+            'use_htf_confirmation': defaults.use_htf_confirmation,  # FALSE
+            'stress_threshold': defaults.stress_threshold,  # 4.0 vs 2.2
+            'min_wick_ratio': defaults.min_wick_ratio,  # 0.05 vs 0.3
+            'use_rejection_wicks': defaults.use_rejection_wicks,  # FALSE
+            'use_session_filter': defaults.use_session_filter,  # FALSE
+            'rsi_min': defaults.rsi_min,  # 5 vs 25
+            'rsi_max': defaults.rsi_max,  # 95 vs 75
+            'volume_multiplier': defaults.volume_multiplier,  # 0.8 vs 1.1
+            'use_volume_filter': defaults.use_volume_filter,  # FALSE
 
             # Symbol-specific
             'pip_value': symbol_config.pip_value,
             'contract_size': symbol_config.contract_size,
 
-            # Strategy defaults from timeframe
+            # Strategy ranges
             'bb_window_range': defaults.bb_window_range,
             'bb_std_dev_range': defaults.bb_std_dev_range,
             'sl_percent_range': defaults.sl_percent_range,
@@ -330,20 +375,20 @@ class UnifiedConfigManager:
         return output_dir
 
     def get_available_symbols(self) -> List[str]:
-        """Get list of available symbols."""
+        """🚀 Get TARGET symbols for multi-symbol trading."""
         return list(self.symbols.keys())
 
     def save_config(self) -> None:
         """Save current configuration to files."""
         configs = {'trading': self.trading, 'backtest': self.backtest,
-            'logging_config': self.logging_config}
+                   'logging_config': self.logging_config}
 
         for config_name, config_obj in configs.items():
             config_path = self.config_dir / f"{config_name}_config.json"
             with open(config_path, 'w') as f:
                 json.dump(asdict(config_obj), f, indent=2)
 
-        logger.info("Configuration saved to files")
+        logger.info("🚀 Personal trading configuration saved")
 
     def reload_config(self) -> None:
         """Reload configuration from files."""
@@ -352,27 +397,32 @@ class UnifiedConfigManager:
         logger.info("Configuration reloaded")
 
 
-# Global configuration instance - SINGLE SOURCE OF TRUTH
+# 🚀 PERSONAL TRADING CONFIGURATION INSTANCE
 config_manager = UnifiedConfigManager()
 
 # Create logger AFTER config_manager is initialized
 logger = logging.getLogger(__name__)
 
-# Backward compatibility exports - SINGLE SOURCE
-INITIAL_CAPITAL = config_manager.trading.initial_capital
+# 🚀 PERSONAL TRADING EXPORTS
+INITIAL_CAPITAL = config_manager.trading.initial_capital  # 100k vs 10k
 FEES = config_manager.trading.fees
-SYMBOLS = config_manager.get_available_symbols()
+SYMBOLS = config_manager.get_available_symbols()  # Multi-symbol ready
 OUTPUT_DIR = config_manager.get_output_dir()
 
-# FTMO limits - SINGLE SOURCE
+# FTMO limits (for comparison)
 MAX_DAILY_LOSS = config_manager.trading.ftmo_daily_loss_limit
 MAX_TOTAL_LOSS = config_manager.trading.ftmo_total_loss_limit
 PROFIT_TARGET = config_manager.trading.ftmo_profit_target
 
+# 🚀 PERSONAL TRADING LIMITS
+PERSONAL_MAX_RISK_PER_TRADE = config_manager.trading.max_risk_per_trade  # 5%
+PERSONAL_MAX_DAILY_LOSS = config_manager.trading.max_daily_loss  # 15%
+PERSONAL_MAX_TOTAL_LOSS = config_manager.trading.max_total_loss  # 25%
+
 
 # UNIFIED API FUNCTIONS
 def get_pip_value(symbol: str) -> float:
-    """Get pip value for symbol - SINGLE SOURCE."""
+    """Get pip value for symbol."""
     return config_manager.get_pip_value(symbol)
 
 
@@ -382,13 +432,44 @@ def get_symbol_info(symbol: str) -> SymbolConfig:
 
 
 def get_strategy_config(strategy_name: str, timeframe: str) -> Dict[str, Any]:
-    """Get configuration for strategy and timeframe - SINGLE SOURCE."""
+    """🚀 Get FREQUENCY-OPTIMIZED configuration for strategy and timeframe."""
     return config_manager.get_strategy_params(strategy_name, timeframe)
 
 
 def get_risk_config() -> Dict[str, float]:
-    """Get risk management configuration."""
-    return {'max_risk_per_trade': config_manager.trading.max_risk_per_trade,
-        'max_daily_loss': config_manager.trading.max_daily_loss,
-        'max_total_loss': config_manager.trading.max_total_loss,
-        'max_portfolio_heat': config_manager.trading.max_portfolio_heat}
+    """🚀 Get PERSONAL TRADING risk management configuration."""
+    return {'max_risk_per_trade': config_manager.trading.max_risk_per_trade,  # 5%
+        'max_daily_loss': config_manager.trading.max_daily_loss,  # 15%
+        'max_total_loss': config_manager.trading.max_total_loss,  # 25%
+        'max_portfolio_heat': config_manager.trading.max_portfolio_heat  # 20%
+    }
+
+
+def get_multi_symbol_config() -> Dict[str, Any]:
+    """🚀 Get multi-symbol trading configuration for 250+ trades/year."""
+    return {'target_symbols': SYMBOLS,
+        # ["GER40.cash", "XAUUSD", "EURUSD", "US30.cash", "GBPUSD"]
+        'expected_trades_per_symbol': 60, 'total_expected_trades': 60 * len(SYMBOLS),
+        # 300 trades/year
+        'portfolio_risk': PERSONAL_MAX_RISK_PER_TRADE,  # 5% per trade
+        'correlation_management': True}
+
+
+# 🎯 LOG THE CHANGES
+if __name__ == "__main__":
+    logger.info("🚀 SOPHY4 CONFIGURATION UPDATED FOR PERSONAL TRADING")
+    logger.info("=" * 60)
+    logger.info(f"💰 Capital: ${INITIAL_CAPITAL:,.0f} (vs $10k FTMO)")
+    logger.info(f"⚡ Risk/Trade: {PERSONAL_MAX_RISK_PER_TRADE:.1%} (vs 1.5% FTMO)")
+    logger.info(f"🎯 Target Symbols: {len(SYMBOLS)} ({', '.join(SYMBOLS)})")
+
+    multi_config = get_multi_symbol_config()
+    logger.info(
+        f"📈 Expected Frequency: {multi_config['total_expected_trades']} trades/year")
+    logger.info("🔑 KEY FILTERS DISABLED:")
+    logger.info("   ❌ HTF Confirmation = FALSE (was blocking 100%)")
+    logger.info("   ⬆️ Stress Threshold = 4.0 (was 2.2)")
+    logger.info("   ⬇️ Min Wick Ratio = 0.05 (was 0.3)")
+    logger.info("   ❌ Session Filter = FALSE (24/7 trading)")
+    logger.info("   📊 RSI Range = 5-95 (was 25-75)")
+    logger.info("🚀 READY FOR 250+ TRADES/YEAR!")

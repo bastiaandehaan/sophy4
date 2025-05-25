@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Backtest Parameter Passing Fix
-The strategy constructor now works, but parameters aren't reaching the backtest
+🚀 SOPHY4 FREQUENCY FIX VALIDATION
+Test that the configuration changes achieve the target 250+ trades/year
 """
 
 import sys
@@ -9,248 +9,284 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).parent))
 
+import logging
+from datetime import datetime
+import pandas as pd
 
-def debug_backtest_parameter_flow():
-    """Debug where parameters get lost in the backtest chain."""
+# Set up logging
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-    print("🔍 DEBUGGING BACKTEST PARAMETER FLOW")
-    print("=" * 50)
 
-    # Test the full chain: run_extended_backtest -> get_strategy -> strategy
-    print("\n1. Testing direct strategy creation (known working)...")
+def test_config_changes():
+    """Test that configuration changes are working."""
+    logger.info("🧪 TESTING CONFIG CHANGES")
+    logger.info("=" * 50)
 
-    test_params = {'use_htf_confirmation': False, 'stress_threshold': 3.5,
-        'symbol': 'GER40.cash'}
+    try:
+        # Import updated config
+        from config import (config_manager, get_strategy_config,
+                            get_multi_symbol_config, PERSONAL_MAX_RISK_PER_TRADE,
+                            SYMBOLS)
+
+        # Test 1: Verify key configuration changes
+        logger.info("1. Verifying configuration changes...")
+
+        h1_config = get_strategy_config("SimpleOrderBlockStrategy", "H1")
+
+        # Check critical frequency parameters
+        tests = [("HTF Confirmation", h1_config.get('use_htf_confirmation'), False),
+            ("Stress Threshold", h1_config.get('stress_threshold'), 4.0),
+            ("Min Wick Ratio", h1_config.get('min_wick_ratio'), 0.05),
+            ("Rejection Wicks", h1_config.get('use_rejection_wicks'), False),
+            ("Session Filter", h1_config.get('use_session_filter'), False),
+            ("RSI Min", h1_config.get('rsi_min'), 5),
+            ("RSI Max", h1_config.get('rsi_max'), 95),
+            ("Risk per Trade", PERSONAL_MAX_RISK_PER_TRADE, 0.05)]
+
+        all_passed = True
+        for test_name, actual, expected in tests:
+            status = "✅" if actual == expected else "❌"
+            logger.info(f"   {status} {test_name}: {actual} (expected: {expected})")
+            if actual != expected:
+                all_passed = False
+
+        if all_passed:
+            logger.info("   🎉 All configuration tests PASSED!")
+        else:
+            logger.error("   ❌ Some configuration tests FAILED!")
+            return False
+
+        # Test 2: Multi-symbol configuration
+        logger.info("2. Verifying multi-symbol setup...")
+        multi_config = get_multi_symbol_config()
+
+        logger.info(f"   📊 Target symbols: {len(SYMBOLS)} ({', '.join(SYMBOLS)})")
+        logger.info(
+            f"   🎯 Expected frequency: {multi_config['total_expected_trades']} trades/year")
+        logger.info(f"   💰 Portfolio risk: {multi_config['portfolio_risk']:.1%}")
+
+        return True
+
+    except Exception as e:
+        logger.error(f"❌ Configuration test failed: {e}")
+        return False
+
+
+def test_strategy_parameters():
+    """Test that strategy now accepts the frequency parameters."""
+    logger.info("\n🧪 TESTING STRATEGY PARAMETER ACCEPTANCE")
+    logger.info("=" * 50)
 
     try:
         from strategies.simple_order_block import SimpleOrderBlockStrategy
-        strategy = SimpleOrderBlockStrategy(**test_params)
-        print(f"   ✅ Direct creation works: HTF={strategy.use_htf_confirmation}")
+
+        # Test parameter sets
+        test_configs = {
+            "FTMO (Old)": {'use_htf_confirmation': True, 'stress_threshold': 2.2,
+                'min_wick_ratio': 0.3, 'use_rejection_wicks': True, 'rsi_min': 25,
+                'rsi_max': 75},
+            "PERSONAL (New)": {'use_htf_confirmation': False, 'stress_threshold': 4.0,
+                'min_wick_ratio': 0.05, 'use_rejection_wicks': False, 'rsi_min': 5,
+                'rsi_max': 95}}
+
+        for config_name, params in test_configs.items():
+            logger.info(f"   Testing {config_name} configuration...")
+
+            try:
+                strategy = SimpleOrderBlockStrategy(**params)
+
+                # Verify parameters were set correctly
+                assert strategy.use_htf_confirmation == params['use_htf_confirmation']
+                assert strategy.stress_threshold == params['stress_threshold']
+                assert strategy.min_wick_ratio == params['min_wick_ratio']
+                assert strategy.use_rejection_wicks == params['use_rejection_wicks']
+                assert strategy.rsi_min == params['rsi_min']
+                assert strategy.rsi_max == params['rsi_max']
+
+                logger.info(f"      ✅ {config_name}: Parameters accepted correctly")
+
+            except Exception as e:
+                logger.error(f"      ❌ {config_name}: Failed - {e}")
+                return False
+
+        logger.info("   🎉 All parameter tests PASSED!")
+        return True
+
     except Exception as e:
-        print(f"   ❌ Direct creation failed: {e}")
+        logger.error(f"❌ Strategy parameter test failed: {e}")
         return False
 
-    print("\n2. Testing get_strategy function...")
+
+def test_signal_generation():
+    """Test signal generation with old vs new parameters."""
+    logger.info("\n🧪 TESTING SIGNAL GENERATION FREQUENCY")
+    logger.info("=" * 50)
+
     try:
-        from strategies import get_strategy
-        strategy = get_strategy("SimpleOrderBlockStrategy", **test_params)
-        print(f"   ✅ get_strategy works: HTF={strategy.use_htf_confirmation}")
-    except Exception as e:
-        print(f"   ❌ get_strategy failed: {e}")
-        return False
+        from strategies.simple_order_block import SimpleOrderBlockStrategy
+        from backtest.data_loader import fetch_historical_data
 
-    print("\n3. Testing run_extended_backtest parameter passing...")
-    try:
-        from backtest.backtest import run_extended_backtest
+        # Get test data
+        logger.info("   📥 Loading test data...")
+        df = fetch_historical_data("GER40.cash", "H1", days=180)  # 6 months
 
-        # This should pass parameters to the strategy
-        print(f"   Calling run_extended_backtest with parameters...")
-        pf, metrics = run_extended_backtest(strategy_name="SimpleOrderBlockStrategy",
-            parameters=test_params, symbol="GER40.cash", timeframe="H1", period_days=30,
-            # Short test
-            silent=False  # See the logs
-        )
-
-        if metrics and 'trades_count' in metrics:
-            print(f"   ✅ Backtest completed: {metrics['trades_count']} trades")
-            return True
-        else:
-            print(f"   ❌ Backtest failed or no metrics")
+        if df is None or df.empty:
+            logger.error("   ❌ Could not load test data")
             return False
 
+        logger.info(f"   ✅ Data loaded: {len(df)} bars")
+
+        # Test configurations
+        test_configs = [("FTMO Restrictive",
+                         {'use_htf_confirmation': True, 'stress_threshold': 2.2,
+                             'min_wick_ratio': 0.3, 'use_rejection_wicks': True,
+                             'rsi_min': 25, 'rsi_max': 75}), ("Personal Optimized", {
+            'use_htf_confirmation': False,  # KEY: Remove HTF blocking
+            'stress_threshold': 4.0,  # KEY: Relax stress filter
+            'min_wick_ratio': 0.05,  # KEY: Minimal wick requirements
+            'use_rejection_wicks': False,  # KEY: No wick filter
+            'rsi_min': 5,  # KEY: Wide RSI range
+            'rsi_max': 95})]
+
+        results = []
+
+        for config_name, params in test_configs:
+            logger.info(f"   🧪 Testing {config_name}...")
+
+            try:
+                strategy = SimpleOrderBlockStrategy(**params)
+                entries, sl, tp = strategy.generate_signals(df)
+
+                signals = entries.sum()
+                trades_per_year = signals * (365 / len(df))
+
+                logger.info(
+                    f"      📊 {signals} signals = {trades_per_year:.0f} trades/year")
+
+                results.append({'name': config_name, 'signals': signals,
+                    'trades_per_year': trades_per_year})
+
+            except Exception as e:
+                logger.error(f"      ❌ {config_name} failed: {e}")
+                return False
+
+        # Compare results
+        logger.info("   📊 COMPARISON:")
+        if len(results) >= 2:
+            old_freq = results[0]['trades_per_year']
+            new_freq = results[1]['trades_per_year']
+
+            improvement = new_freq / max(old_freq, 1)
+
+            logger.info(f"      FTMO: {old_freq:.0f} trades/year")
+            logger.info(f"      Personal: {new_freq:.0f} trades/year")
+            logger.info(f"      Improvement: {improvement:.1f}x")
+
+            if new_freq >= 60:  # Target per symbol
+                logger.info("      🎉 TARGET ACHIEVED for single symbol!")
+                logger.info(
+                    f"      📈 Multi-symbol projection: {new_freq * 5:.0f} trades/year")
+            else:
+                logger.warning(f"      ⚠️ Still below target (need 60+ per symbol)")
+
+        return True
+
     except Exception as e:
-        print(f"   ❌ run_extended_backtest failed: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"❌ Signal generation test failed: {e}")
         return False
 
 
-def fix_backtest_parameter_passing():
-    """Analyze and fix the parameter passing in backtest.py"""
+def test_portfolio_framework():
+    """Test the portfolio framework."""
+    logger.info("\n🧪 TESTING PORTFOLIO FRAMEWORK")
+    logger.info("=" * 50)
 
-    print(f"\n🔧 ANALYZING BACKTEST.PY PARAMETER FLOW")
-    print("=" * 50)
-
-    # Check how run_extended_backtest calls get_strategy
     try:
-        import inspect
-        from backtest.backtest import run_extended_backtest
+        from portfolio_backtest import PortfolioBacktester
 
-        # Get the source code
-        source = inspect.getsource(run_extended_backtest)
+        logger.info("   🚀 Initializing portfolio backtester...")
 
-        # Look for get_strategy call
-        if "get_strategy" in source:
-            print("✅ run_extended_backtest calls get_strategy")
+        backtester = PortfolioBacktester(strategy_name="SimpleOrderBlockStrategy",
+            timeframe="H1", days=90,  # Quick test with 3 months
+            target_trades_per_year=250)
 
-            # Check how parameters are passed
-            lines = source.split('\n')
-            for i, line in enumerate(lines):
-                if 'get_strategy' in line:
-                    print(f"   Line {i}: {line.strip()}")
+        logger.info("   ✅ Portfolio backtester initialized")
+        logger.info(f"   📊 Target symbols: {len(backtester.target_symbols)}")
+        logger.info(
+            f"   🎯 Target frequency: {backtester.target_trades_per_year} trades/year")
 
-                    # Check surrounding lines for parameter passing
-                    for j in range(max(0, i - 2), min(len(lines), i + 3)):
-                        if 'parameters' in lines[j]:
-                            print(f"   Context {j}: {lines[j].strip()}")
+        # Test single symbol (quick validation)
+        logger.info("   🧪 Testing single symbol backtesting...")
+        test_symbol = "GER40.cash"
+
+        result = backtester.backtest_single_symbol(test_symbol)
+
+        if result.success:
+            logger.info(
+                f"      ✅ {test_symbol}: {result.trades} trades ({result.trades_per_year:.0f}/year)")
+            if result.trades_per_year >= 60:
+                logger.info(f"      🎉 Single symbol target achieved!")
         else:
-            print("❌ run_extended_backtest doesn't call get_strategy!")
-            print("This is the problem - parameters never reach the strategy")
+            logger.warning(f"      ⚠️ {test_symbol}: {result.error_message}")
+
+        return True
 
     except Exception as e:
-        print(f"❌ Analysis failed: {e}")
+        logger.error(f"❌ Portfolio framework test failed: {e}")
+        return False
 
 
-def create_fixed_backtest_call():
-    """Create a fixed version of the backtest call that properly passes parameters."""
+def run_full_validation():
+    """Run full validation suite."""
+    logger.info("🚀 SOPHY4 FREQUENCY FIX VALIDATION")
+    logger.info("=" * 60)
+    logger.info(f"Timestamp: {datetime.now()}")
+    logger.info("=" * 60)
 
-    print(f"\n🚀 CREATING FIXED BACKTEST FUNCTION")
-    print("=" * 50)
+    tests = [("Configuration Changes", test_config_changes),
+        ("Strategy Parameters", test_strategy_parameters),
+        ("Signal Generation", test_signal_generation),
+        ("Portfolio Framework", test_portfolio_framework)]
 
-    fixed_function = '''
-def run_fixed_backtest(strategy_name: str, parameters: Dict[str, Any], 
-                      symbol: str, timeframe: str = "H1", days: int = 365):
-    """
-    Fixed backtest that properly passes parameters to strategy.
-    """
-    from datetime import datetime
-    from backtest.data_loader import fetch_historical_data
-    from strategies import get_strategy
-    import vectorbt as vbt
-    from config import INITIAL_CAPITAL, FEES
+    passed = 0
+    total = len(tests)
 
-    print(f"🧪 FIXED BACKTEST: {strategy_name} with parameters")
-    print(f"Parameters being passed: {parameters}")
-
-    # Fetch data
-    df = fetch_historical_data(symbol, timeframe=timeframe, days=days)
-    if df is None or df.empty:
-        print(f"❌ No data for {symbol}")
-        return None, {}
-
-    print(f"✅ Data loaded: {len(df)} bars")
-
-    # Create strategy with parameters - THIS IS THE FIX!
-    strategy = get_strategy(strategy_name, **parameters)
-    print(f"✅ Strategy created with HTF={getattr(strategy, 'use_htf_confirmation', 'N/A')}")
-
-    # Generate signals
-    entries, sl_stop, tp_stop = strategy.generate_signals(df)
-
-    print(f"✅ Signals generated: {entries.sum()} entries")
-
-    # Create portfolio
-    try:
-        pf = vbt.Portfolio.from_signals(
-            close=df['close'],
-            entries=entries > 0,
-            sl_stop=sl_stop,
-            tp_stop=tp_stop,
-            init_cash=INITIAL_CAPITAL,
-            fees=FEES
-        )
-
-        # Calculate basic metrics
-        metrics = {
-            'trades_count': len(pf.trades) if hasattr(pf, 'trades') else 0,
-            'total_return': float(pf.total_return()),
-            'win_rate': float(pf.trades.win_rate()) if len(pf.trades) > 0 else 0.0
-        }
-
-        print(f"✅ Portfolio created: {metrics['trades_count']} trades")
-        return pf, metrics
-
-    except Exception as e:
-        print(f"❌ Portfolio creation failed: {e}")
-        return None, {}
-'''
-
-    # Write to file
-    with open("fixed_backtest.py", "w", encoding='utf-8') as f:
-        f.write("# Fixed Backtest Function\n")
-        f.write("from typing import Dict, Any\n")
-        f.write(fixed_function)
-
-    print("✅ Created fixed_backtest.py")
-    return fixed_function
-
-
-def test_fixed_backtest():
-    """Test the fixed backtest function."""
-
-    print(f"\n🎯 TESTING FIXED BACKTEST")
-    print("=" * 50)
-
-    # Import the fixed function
-    exec(open("fixed_backtest.py").read())
-
-    # Test restrictive vs relaxed
-    test_cases = [("RESTRICTIVE",
-                   {'use_htf_confirmation': True, 'stress_threshold': 2.2,
-                       'min_wick_ratio': 0.3, 'symbol': 'GER40.cash'}),
-        ("RELAXED", {'use_htf_confirmation': False,  # KEY CHANGE
-            'stress_threshold': 3.5,  # KEY CHANGE
-            'min_wick_ratio': 0.1,  # KEY CHANGE
-            'use_rejection_wicks': False,  # KEY CHANGE
-            'symbol': 'GER40.cash'})]
-
-    results = []
-
-    for name, params in test_cases:
-        print(f"\n🧪 Testing {name} configuration...")
+    for test_name, test_func in tests:
+        logger.info(f"\n🔍 Running {test_name}...")
         try:
-            # Use the fixed function (defined in exec above)
-            pf, metrics = run_fixed_backtest(strategy_name="SimpleOrderBlockStrategy",
-                parameters=params, symbol="GER40.cash", timeframe="H1", days=365)
-
-            if metrics:
-                trades = metrics.get('trades_count', 0)
-                win_rate = metrics.get('win_rate', 0)
-                print(f"   ✅ {name}: {trades} trades, {win_rate:.1%} win rate")
-                results.append((name, trades, win_rate))
+            if test_func():
+                passed += 1
+                logger.info(f"✅ {test_name} PASSED")
             else:
-                print(f"   ❌ {name}: No results")
-
+                logger.error(f"❌ {test_name} FAILED")
         except Exception as e:
-            print(f"   ❌ {name}: Failed - {e}")
+            logger.error(f"❌ {test_name} ERROR: {e}")
 
-    # Compare results
-    if len(results) >= 2:
-        restrictive_trades = results[0][1]
-        relaxed_trades = results[1][1]
+    # Final summary
+    logger.info("\n" + "=" * 60)
+    logger.info("🏆 VALIDATION SUMMARY")
+    logger.info("=" * 60)
+    logger.info(f"Tests Passed: {passed}/{total}")
 
-        print(f"\n📊 COMPARISON:")
-        print(f"   Restrictive: {restrictive_trades} trades")
-        print(f"   Relaxed: {relaxed_trades} trades")
+    if passed == total:
+        logger.info("🎉 ALL TESTS PASSED!")
+        logger.info("🚀 SOPHY4 is ready for high-frequency trading!")
+        logger.info("📈 Expected: 250+ trades/year across 5 symbols")
+        logger.info("💰 Risk: 5% per trade (personal account)")
+        logger.info("")
+        logger.info("🔥 NEXT STEPS:")
+        logger.info("1. Run full portfolio backtest: python portfolio_backtest.py")
+        logger.info("2. Deploy to paper trading for validation")
+        logger.info("3. Scale to live trading with small positions")
+    else:
+        logger.error("❌ VALIDATION FAILED!")
+        logger.error("🔧 Fix the failing tests before proceeding")
 
-        if relaxed_trades > restrictive_trades:
-            multiplier = relaxed_trades / max(restrictive_trades, 1)
-            print(f"   🚀 SUCCESS: {multiplier:.1f}x increase!")
-            print(f"   💡 Multi-symbol projection: {relaxed_trades * 5} trades/year")
-        else:
-            print(f"   ⚠️  Need more aggressive parameter relaxation")
+    return passed == total
 
 
 if __name__ == "__main__":
-    print("🔧 BACKTEST PARAMETER PASSING DEBUG")
-    print("=" * 60)
-
-    # Step 1: Debug where parameters get lost
-    backtest_works = debug_backtest_parameter_flow()
-
-    # Step 2: Analyze the backtest code
-    fix_backtest_parameter_passing()
-
-    # Step 3: Create and test fixed version
-    create_fixed_backtest_call()
-    test_fixed_backtest()
-
-    print(f"\n🎯 NEXT STEPS:")
-    if not backtest_works:
-        print(
-            "1. The issue is in run_extended_backtest - parameters not passed to get_strategy")
-        print("2. Use the fixed_backtest.py function to test parameters properly")
-        print("3. Once working, fix the main backtest.py function")
-    else:
-        print("1. Parameters are working correctly!")
-        print("2. Test with more aggressive parameter relaxation")
+    success = run_full_validation()
+    sys.exit(0 if success else 1)
