@@ -16,7 +16,9 @@ try:
     from .simple_order_block import SimpleOrderBlockStrategy
     from .base_strategy import BaseStrategy
 
-    # Add other strategies here as they are developed  # from .bollinger_strategy import BollingerStrategy  # from .lstm_strategy import OrderBlockLSTMStrategy
+    # Add other strategies here as they are developed
+    # from .bollinger_strategy import BollingerStrategy
+    # from .lstm_strategy import OrderBlockLSTMStrategy
 
 except ImportError as e:
     logger.error(f"Failed to import strategies: {e}")
@@ -26,13 +28,12 @@ except ImportError as e:
 STRATEGY_REGISTRY: Dict[str, Type[BaseStrategy]] = {
     "SimpleOrderBlockStrategy": SimpleOrderBlockStrategy,
     "simple_order_block": SimpleOrderBlockStrategy,  # Alternative name
-    "order_block": SimpleOrderBlockStrategy,  # Short name
+    "order_block": SimpleOrderBlockStrategy,         # Short name
 
     # Add other strategies here
     # "BollingerStrategy": BollingerStrategy,
     # "OrderBlockLSTMStrategy": OrderBlockLSTMStrategy,
 }
-
 
 def get_available_strategies() -> Dict[str, str]:
     """
@@ -46,10 +47,9 @@ def get_available_strategies() -> Dict[str, str]:
         # Add other strategy descriptions here
     }
 
-    return {name: descriptions.get(name, "No description available") for name in
-            STRATEGY_REGISTRY.keys() if
-            not name.startswith("_")}  # Exclude internal aliases
-
+    return {name: descriptions.get(name, "No description available")
+            for name in STRATEGY_REGISTRY.keys()
+            if not name.startswith("_")}  # Exclude internal aliases
 
 def get_strategy(strategy_name: str, **kwargs) -> BaseStrategy:
     """
@@ -82,8 +82,7 @@ def get_strategy(strategy_name: str, **kwargs) -> BaseStrategy:
 
     if strategy_class is None:
         available = list(STRATEGY_REGISTRY.keys())
-        raise ValueError(
-            f"Strategy '{strategy_name}' not found. Available: {available}")
+        raise ValueError(f"Strategy '{strategy_name}' not found. Available: {available}")
 
     try:
         # Validate required parameters
@@ -93,12 +92,10 @@ def get_strategy(strategy_name: str, **kwargs) -> BaseStrategy:
             kwargs['symbol'] = 'GER40.cash'
 
         trading_mode = kwargs.get('trading_mode', 'personal')
-        logger.info(
-            f"Creating {strategy_name} for {symbol} in {trading_mode.upper()} mode")
+        logger.info(f"Creating {strategy_name} for {symbol} in {trading_mode.upper()} mode")
 
         # Log key parameters for verification
-        key_params = ['use_htf_confirmation', 'stress_threshold', 'rsi_min', 'rsi_max',
-                      'risk_per_trade']
+        key_params = ['use_htf_confirmation', 'stress_threshold', 'rsi_min', 'rsi_max', 'risk_per_trade']
         for param in key_params:
             if param in kwargs:
                 logger.info(f"  {param}: {kwargs[param]}")
@@ -110,16 +107,14 @@ def get_strategy(strategy_name: str, **kwargs) -> BaseStrategy:
         # Verify strategy was created with correct parameters
         if hasattr(strategy, 'get_strategy_info'):
             info = strategy.get_strategy_info()
-            logger.info(
-                f"Strategy created successfully: {info.get('name', strategy_name)}")
+            logger.info(f"Strategy created successfully: {info.get('name', strategy_name)}")
 
             # Verify critical parameters were applied
             if 'use_htf_confirmation' in kwargs:
                 actual_htf = getattr(strategy, 'use_htf_confirmation', None)
                 expected_htf = kwargs['use_htf_confirmation']
                 if actual_htf != expected_htf:
-                    logger.warning(
-                        f"HTF confirmation mismatch: expected {expected_htf}, got {actual_htf}")
+                    logger.warning(f"HTF confirmation mismatch: expected {expected_htf}, got {actual_htf}")
                 else:
                     logger.info(f"  HTF confirmation correctly set: {actual_htf}")
 
@@ -137,9 +132,7 @@ def get_strategy(strategy_name: str, **kwargs) -> BaseStrategy:
         traceback.print_exc()
         raise
 
-
-def validate_strategy_parameters(strategy_name: str, params: Dict[str, Any]) -> Dict[
-    str, Any]:
+def validate_strategy_parameters(strategy_name: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """
     Validate and normalize strategy parameters.
 
@@ -164,21 +157,18 @@ def validate_strategy_parameters(strategy_name: str, params: Dict[str, Any]) -> 
     if 'risk_per_trade' in validated_params:
         risk = validated_params['risk_per_trade']
         if not isinstance(risk, (int, float)) or risk <= 0 or risk > 1:
-            raise ValueError(
-                f"Invalid risk_per_trade: {risk} (must be between 0 and 1)")
+            raise ValueError(f"Invalid risk_per_trade: {risk} (must be between 0 and 1)")
 
     if 'rsi_min' in validated_params and 'rsi_max' in validated_params:
         rsi_min = validated_params['rsi_min']
         rsi_max = validated_params['rsi_max']
         if rsi_min >= rsi_max:
-            raise ValueError(
-                f"Invalid RSI range: {rsi_min}-{rsi_max} (min must be < max)")
+            raise ValueError(f"Invalid RSI range: {rsi_min}-{rsi_max} (min must be < max)")
         if rsi_min < 0 or rsi_max > 100:
             raise ValueError(f"Invalid RSI values: {rsi_min}-{rsi_max} (must be 0-100)")
 
     # Strategy-specific validation
-    if strategy_name.lower() in ['simpleorderblockstrategy', 'simple_order_block',
-                                 'order_block']:
+    if strategy_name.lower() in ['simpleorderblockstrategy', 'simple_order_block', 'order_block']:
         # Validate order block specific parameters
         if 'ob_lookback' in validated_params:
             lookback = validated_params['ob_lookback']
@@ -188,18 +178,15 @@ def validate_strategy_parameters(strategy_name: str, params: Dict[str, Any]) -> 
         if 'stress_threshold' in validated_params:
             threshold = validated_params['stress_threshold']
             if not isinstance(threshold, (int, float)) or threshold <= 0:
-                raise ValueError(
-                    f"Invalid stress_threshold: {threshold} (must be positive)")
+                raise ValueError(f"Invalid stress_threshold: {threshold} (must be positive)")
 
         if 'min_wick_ratio' in validated_params:
             ratio = validated_params['min_wick_ratio']
             if not isinstance(ratio, (int, float)) or ratio < 0:
-                raise ValueError(
-                    f"Invalid min_wick_ratio: {ratio} (must be non-negative)")
+                raise ValueError(f"Invalid min_wick_ratio: {ratio} (must be non-negative)")
 
     logger.info(f"Parameters validated for {strategy_name}")
     return validated_params
-
 
 def list_strategy_parameters(strategy_name: str) -> Dict[str, Any]:
     """
@@ -211,18 +198,33 @@ def list_strategy_parameters(strategy_name: str) -> Dict[str, Any]:
     Returns:
         Dictionary with parameter info
     """
-    if strategy_name.lower() in ['simpleorderblockstrategy', 'simple_order_block',
-                                 'order_block']:
-        return {'required_parameters': ['symbol'],
-            'optional_parameters': {'trading_mode': 'personal',
-                'use_htf_confirmation': False, 'stress_threshold': 10.0,
-                'min_wick_ratio': 0.001, 'use_rejection_wicks': False,
-                'use_session_filter': False, 'use_volume_filter': False, 'rsi_min': 1,
-                'rsi_max': 99, 'rsi_period': 14, 'volume_multiplier': 0.1,
-                'volume_period': 20, 'risk_per_trade': 0.05, 'ob_lookback': 2,
-                'sl_percent': 0.008, 'tp_percent': 0.025, 'min_body_ratio': 0.5,
-                'trend_strength_min': 0.5, 'htf_timeframe': 'H4', 'htf_lookback': 30, },
-            'parameter_descriptions': {'symbol': 'Trading symbol (e.g., GER40.cash)',
+    if strategy_name.lower() in ['simpleorderblockstrategy', 'simple_order_block', 'order_block']:
+        return {
+            'required_parameters': ['symbol'],
+            'optional_parameters': {
+                'trading_mode': 'personal',
+                'use_htf_confirmation': False,
+                'stress_threshold': 10.0,
+                'min_wick_ratio': 0.001,
+                'use_rejection_wicks': False,
+                'use_session_filter': False,
+                'use_volume_filter': False,
+                'rsi_min': 1,
+                'rsi_max': 99,
+                'rsi_period': 14,
+                'volume_multiplier': 0.1,
+                'volume_period': 20,
+                'risk_per_trade': 0.05,
+                'ob_lookback': 2,
+                'sl_percent': 0.008,
+                'tp_percent': 0.025,
+                'min_body_ratio': 0.5,
+                'trend_strength_min': 0.5,
+                'htf_timeframe': 'H4',
+                'htf_lookback': 30,
+            },
+            'parameter_descriptions': {
+                'symbol': 'Trading symbol (e.g., GER40.cash)',
                 'trading_mode': 'Trading mode (personal/ftmo/aggressive)',
                 'use_htf_confirmation': 'Enable higher timeframe confirmation',
                 'stress_threshold': 'Market stress detection threshold',
@@ -232,13 +234,13 @@ def list_strategy_parameters(strategy_name: str) -> Dict[str, Any]:
                 'risk_per_trade': 'Risk percentage per trade',
                 'ob_lookback': 'Order block lookback periods',
                 'sl_percent': 'Stop loss percentage',
-                'tp_percent': 'Take profit percentage', }}
+                'tp_percent': 'Take profit percentage',
+            }
+        }
 
     return {"error": f"Parameter info not available for {strategy_name}"}
 
-
-def create_strategy_from_config(config_manager, strategy_name: str, symbol: str,
-                                **overrides) -> BaseStrategy:
+def create_strategy_from_config(config_manager, strategy_name: str, symbol: str, **overrides) -> BaseStrategy:
     """
     Create strategy using config manager with optional overrides.
 
@@ -260,16 +262,21 @@ def create_strategy_from_config(config_manager, strategy_name: str, symbol: str,
     # Create strategy
     return get_strategy(strategy_name, **validated_params)
 
-
 # Module initialization
 logger.info(f"Strategies module loaded: {len(STRATEGY_REGISTRY)} strategies available")
 available_strategies = get_available_strategies()
 for name, desc in available_strategies.items():
-    if not any(alias in name for alias in
-               ['simple_order_block', 'order_block']):  # Only log main names
+    if not any(alias in name for alias in ['simple_order_block', 'order_block']):  # Only log main names
         logger.info(f"  {name}: {desc}")
 
 # Export public interface
-__all__ = ['get_strategy', 'get_available_strategies', 'validate_strategy_parameters',
-    'list_strategy_parameters', 'create_strategy_from_config',
-    'SimpleOrderBlockStrategy', 'BaseStrategy', 'STRATEGY_REGISTRY']
+__all__ = [
+    'get_strategy',
+    'get_available_strategies',
+    'validate_strategy_parameters',
+    'list_strategy_parameters',
+    'create_strategy_from_config',
+    'SimpleOrderBlockStrategy',
+    'BaseStrategy',
+    'STRATEGY_REGISTRY'
+]

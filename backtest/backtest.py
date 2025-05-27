@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 # Suppress VectorBT warnings for cleaner output
 warnings.filterwarnings('ignore', category=UserWarning, module='vectorbt')
 
-
 class HighFrequencyBacktester:
     """
     Backtesting engine optimized for high frequency trading (400-600 trades/year).
@@ -45,9 +44,9 @@ class HighFrequencyBacktester:
         logger.info(f"  Slippage: {slippage:.5%}")
         logger.info(f"  Frequency: {freq}")
 
-    def run_backtest(self, df: pd.DataFrame, entries: pd.Series, sl_stop: pd.Series,
-                     tp_stop: pd.Series,
-                     strategy_name: str = "Unknown") -> vbt.Portfolio:
+    def run_backtest(self, df: pd.DataFrame, entries: pd.Series,
+                    sl_stop: pd.Series, tp_stop: pd.Series,
+                    strategy_name: str = "Unknown") -> vbt.Portfolio:
         """
         Run high-frequency optimized backtest.
 
@@ -63,8 +62,7 @@ class HighFrequencyBacktester:
             raise ValueError("Empty dataframe provided")
 
         if len(entries) != len(df):
-            raise ValueError(
-                f"Entries length ({len(entries)}) != dataframe length ({len(df)})")
+            raise ValueError(f"Entries length ({len(entries)}) != dataframe length ({len(df)})")
 
         # Count signals for frequency analysis
         total_signals = entries.sum() if hasattr(entries, 'sum') else 0
@@ -76,8 +74,7 @@ class HighFrequencyBacktester:
 
         # High frequency warning
         if trades_per_year > self.max_trades_warning:
-            logger.warning(
-                f"HIGH FREQUENCY DETECTED: {trades_per_year:.0f} trades/year")
+            logger.warning(f"HIGH FREQUENCY DETECTED: {trades_per_year:.0f} trades/year")
             logger.warning("Enabling performance optimizations...")
 
         # Memory optimization for high frequency
@@ -99,19 +96,24 @@ class HighFrequencyBacktester:
             # Create portfolio with high frequency optimizations
             logger.info("Creating VectorBT portfolio...")
 
-            portfolio_kwargs = {'close': df['close'], 'entries': entries,
-                'sl_stop': sl_stop, 'tp_stop': tp_stop, 'init_cash': self.initial_cash,
-                'fees': self.fees, 'freq': self.freq, 'call_seq': 'auto',
-                # Optimize execution sequence
+            portfolio_kwargs = {
+                'close': df['close'],
+                'entries': entries,
+                'sl_stop': sl_stop,
+                'tp_stop': tp_stop,
+                'init_cash': self.initial_cash,
+                'fees': self.fees,
+                'freq': self.freq,
+                'call_seq': 'auto',  # Optimize execution sequence
             }
 
             # Additional optimizations for high frequency
             if total_signals > 100:
-                portfolio_kwargs.update(
-                    {'cash_sharing': True,  # Share cash across signals
-                        'group_by': False,  # No grouping for performance
-                        'max_logs': min(1000, total_signals * 2),  # Limit log size
-                    })
+                portfolio_kwargs.update({
+                    'cash_sharing': True,      # Share cash across signals
+                    'group_by': False,         # No grouping for performance
+                    'max_logs': min(1000, total_signals * 2),  # Limit log size
+                })
 
             # Create portfolio
             start_time = datetime.now()
@@ -121,30 +123,23 @@ class HighFrequencyBacktester:
             logger.info(f"Portfolio created in {creation_time:.2f} seconds")
 
             # Validate portfolio
-            actual_trades = len(pf.trades.records) if hasattr(pf.trades,
-                                                              'records') else 0
+            actual_trades = len(pf.trades.records) if hasattr(pf.trades, 'records') else 0
             logger.info(f"Actual trades executed: {actual_trades}")
 
             if actual_trades == 0 and total_signals > 0:
-                logger.warning(
-                    "No trades executed despite signals - check SL/TP settings")
+                logger.warning("No trades executed despite signals - check SL/TP settings")
 
             return pf
 
         except Exception as e:
             logger.error(f"Portfolio creation failed: {e}")
             logger.error(f"Data shape: {df.shape}")
-            logger.error(
-                f"Entries type: {type(entries)}, shape: {entries.shape if hasattr(entries, 'shape') else 'N/A'}")
-            logger.error(
-                f"SL type: {type(sl_stop)}, shape: {sl_stop.shape if hasattr(sl_stop, 'shape') else 'N/A'}")
-            logger.error(
-                f"TP type: {type(tp_stop)}, shape: {tp_stop.shape if hasattr(tp_stop, 'shape') else 'N/A'}")
+            logger.error(f"Entries type: {type(entries)}, shape: {entries.shape if hasattr(entries, 'shape') else 'N/A'}")
+            logger.error(f"SL type: {type(sl_stop)}, shape: {sl_stop.shape if hasattr(sl_stop, 'shape') else 'N/A'}")
+            logger.error(f"TP type: {type(tp_stop)}, shape: {tp_stop.shape if hasattr(tp_stop, 'shape') else 'N/A'}")
             raise
 
-
-def calculate_metrics(pf: vbt.Portfolio, benchmark_return: float = 0.05) -> Dict[
-    str, Any]:
+def calculate_metrics(pf: vbt.Portfolio, benchmark_return: float = 0.05) -> Dict[str, Any]:
     """
     Calculate comprehensive trading metrics optimized for high frequency.
 
@@ -162,8 +157,7 @@ def calculate_metrics(pf: vbt.Portfolio, benchmark_return: float = 0.05) -> Dict
         # Total return
         try:
             total_return = pf.total_return()
-            metrics['total_return'] = float(total_return) if not pd.isna(
-                total_return) else 0.0
+            metrics['total_return'] = float(total_return) if not pd.isna(total_return) else 0.0
         except:
             metrics['total_return'] = 0.0
 
@@ -190,34 +184,26 @@ def calculate_metrics(pf: vbt.Portfolio, benchmark_return: float = 0.05) -> Dict
             if trades_count > 0:
                 # Win rate
                 try:
-                    winning_trades = (trades.pnl > 0).sum() if hasattr(trades,
-                                                                       'pnl') else 0
-                    metrics['win_rate'] = float(
-                        winning_trades / trades_count) if trades_count > 0 else 0.0
+                    winning_trades = (trades.pnl > 0).sum() if hasattr(trades, 'pnl') else 0
+                    metrics['win_rate'] = float(winning_trades / trades_count) if trades_count > 0 else 0.0
                 except:
                     metrics['win_rate'] = 0.0
 
                 # Average trade metrics
                 try:
-                    avg_win = trades.pnl[trades.pnl > 0].mean() if hasattr(trades,
-                                                                           'pnl') else 0
-                    avg_loss = trades.pnl[trades.pnl < 0].mean() if hasattr(trades,
-                                                                            'pnl') else 0
+                    avg_win = trades.pnl[trades.pnl > 0].mean() if hasattr(trades, 'pnl') else 0
+                    avg_loss = trades.pnl[trades.pnl < 0].mean() if hasattr(trades, 'pnl') else 0
                     metrics['avg_win'] = float(avg_win) if not pd.isna(avg_win) else 0.0
-                    metrics['avg_loss'] = float(avg_loss) if not pd.isna(
-                        avg_loss) else 0.0
+                    metrics['avg_loss'] = float(avg_loss) if not pd.isna(avg_loss) else 0.0
                 except:
                     metrics['avg_win'] = 0.0
                     metrics['avg_loss'] = 0.0
 
                 # Profit factor
                 try:
-                    total_wins = trades.pnl[trades.pnl > 0].sum() if hasattr(trades,
-                                                                             'pnl') else 0
-                    total_losses = abs(trades.pnl[trades.pnl < 0].sum()) if hasattr(
-                        trades, 'pnl') else 0
-                    metrics['profit_factor'] = float(
-                        total_wins / total_losses) if total_losses > 0 else 0.0
+                    total_wins = trades.pnl[trades.pnl > 0].sum() if hasattr(trades, 'pnl') else 0
+                    total_losses = abs(trades.pnl[trades.pnl < 0].sum()) if hasattr(trades, 'pnl') else 0
+                    metrics['profit_factor'] = float(total_wins / total_losses) if total_losses > 0 else 0.0
                 except:
                     metrics['profit_factor'] = 0.0
 
@@ -226,9 +212,7 @@ def calculate_metrics(pf: vbt.Portfolio, benchmark_return: float = 0.05) -> Dict
                     # Average trade duration (for high frequency analysis)
                     if hasattr(trades, 'duration'):
                         avg_duration = trades.duration.mean()
-                        metrics['avg_trade_duration_hours'] = float(
-                            avg_duration.total_seconds() / 3600) if not pd.isna(
-                            avg_duration) else 0.0
+                        metrics['avg_trade_duration_hours'] = float(avg_duration.total_seconds() / 3600) if not pd.isna(avg_duration) else 0.0
                     else:
                         metrics['avg_trade_duration_hours'] = 0.0
                 except:
@@ -236,17 +220,20 @@ def calculate_metrics(pf: vbt.Portfolio, benchmark_return: float = 0.05) -> Dict
 
         except Exception as e:
             logger.warning(f"Error calculating trade statistics: {e}")
-            metrics.update(
-                {'trades_count': 0, 'win_rate': 0.0, 'avg_win': 0.0, 'avg_loss': 0.0,
-                    'profit_factor': 0.0, 'avg_trade_duration_hours': 0.0, })
+            metrics.update({
+                'trades_count': 0,
+                'win_rate': 0.0,
+                'avg_win': 0.0,
+                'avg_loss': 0.0,
+                'profit_factor': 0.0,
+                'avg_trade_duration_hours': 0.0,
+            })
 
         # Portfolio value metrics
         try:
             portfolio_value = pf.value()
-            metrics['final_value'] = float(portfolio_value.iloc[-1]) if len(
-                portfolio_value) > 0 else 0.0
-            metrics['peak_value'] = float(portfolio_value.max()) if len(
-                portfolio_value) > 0 else 0.0
+            metrics['final_value'] = float(portfolio_value.iloc[-1]) if len(portfolio_value) > 0 else 0.0
+            metrics['peak_value'] = float(portfolio_value.max()) if len(portfolio_value) > 0 else 0.0
         except:
             metrics['final_value'] = 0.0
             metrics['peak_value'] = 0.0
@@ -257,8 +244,7 @@ def calculate_metrics(pf: vbt.Portfolio, benchmark_return: float = 0.05) -> Dict
             returns = pf.returns()
             if len(returns) > 1:
                 volatility = returns.std() * np.sqrt(252)  # Assuming daily frequency
-                metrics['volatility'] = float(volatility) if not pd.isna(
-                    volatility) else 0.0
+                metrics['volatility'] = float(volatility) if not pd.isna(volatility) else 0.0
             else:
                 metrics['volatility'] = 0.0
         except:
@@ -269,8 +255,7 @@ def calculate_metrics(pf: vbt.Portfolio, benchmark_return: float = 0.05) -> Dict
             # Trades per year (critical for frequency analysis)
             if 'trades_count' in metrics:
                 portfolio_days = len(pf.value()) if hasattr(pf, 'value') else 365
-                trades_per_year = metrics['trades_count'] * (
-                            365 / max(portfolio_days, 1))
+                trades_per_year = metrics['trades_count'] * (365 / max(portfolio_days, 1))
                 metrics['trades_per_year'] = float(trades_per_year)
             else:
                 metrics['trades_per_year'] = 0.0
@@ -279,17 +264,22 @@ def calculate_metrics(pf: vbt.Portfolio, benchmark_return: float = 0.05) -> Dict
             if metrics['trades_count'] > 0:
                 metrics['high_frequency'] = metrics['trades_per_year'] > 200
                 metrics['frequency_category'] = (
-                    'Very High' if metrics['trades_per_year'] > 500 else 'High' if
-                    metrics['trades_per_year'] > 200 else 'Medium' if metrics[
-                                                                          'trades_per_year'] > 50 else 'Low')
+                    'Very High' if metrics['trades_per_year'] > 500 else
+                    'High' if metrics['trades_per_year'] > 200 else
+                    'Medium' if metrics['trades_per_year'] > 50 else
+                    'Low'
+                )
             else:
                 metrics['high_frequency'] = False
                 metrics['frequency_category'] = 'None'
 
         except Exception as e:
             logger.warning(f"Error calculating frequency metrics: {e}")
-            metrics.update({'trades_per_year': 0.0, 'high_frequency': False,
-                'frequency_category': 'None', })
+            metrics.update({
+                'trades_per_year': 0.0,
+                'high_frequency': False,
+                'frequency_category': 'None',
+            })
 
         # Performance analysis
         try:
@@ -320,8 +310,7 @@ def calculate_metrics(pf: vbt.Portfolio, benchmark_return: float = 0.05) -> Dict
         logger.info(f"Sharpe ratio: {metrics.get('sharpe_ratio', 0):.2f}")
         logger.info(f"Max drawdown: {metrics.get('max_drawdown', 0):.2%}")
         logger.info(f"Win rate: {metrics.get('win_rate', 0):.1%}")
-        logger.info(
-            f"Trades: {metrics.get('trades_count', 0)} ({metrics.get('trades_per_year', 0):.0f}/year)")
+        logger.info(f"Trades: {metrics.get('trades_count', 0)} ({metrics.get('trades_per_year', 0):.0f}/year)")
         logger.info(f"Frequency: {metrics.get('frequency_category', 'Unknown')}")
 
         return metrics
@@ -332,16 +321,26 @@ def calculate_metrics(pf: vbt.Portfolio, benchmark_return: float = 0.05) -> Dict
         traceback.print_exc()
 
         # Return minimal metrics to prevent crashes
-        return {'total_return': 0.0, 'sharpe_ratio': 0.0, 'max_drawdown': 0.0,
-            'win_rate': 0.0, 'trades_count': 0, 'trades_per_year': 0.0,
-            'profit_factor': 0.0, 'volatility': 0.0, 'final_value': 0.0,
-            'high_frequency': False, 'frequency_category': 'Error',
-            'calculation_time_seconds': 0.0, 'error': str(e)}
+        return {
+            'total_return': 0.0,
+            'sharpe_ratio': 0.0,
+            'max_drawdown': 0.0,
+            'win_rate': 0.0,
+            'trades_count': 0,
+            'trades_per_year': 0.0,
+            'profit_factor': 0.0,
+            'volatility': 0.0,
+            'final_value': 0.0,
+            'high_frequency': False,
+            'frequency_category': 'Error',
+            'calculation_time_seconds': 0.0,
+            'error': str(e)
+        }
 
-
-def run_single_backtest(df: pd.DataFrame, strategy, initial_cash: float = 10000.0,
-                        fees: float = 0.0001, benchmark_return: float = 0.05) -> Dict[
-    str, Any]:
+def run_single_backtest(df: pd.DataFrame, strategy,
+                       initial_cash: float = 10000.0,
+                       fees: float = 0.0001,
+                       benchmark_return: float = 0.05) -> Dict[str, Any]:
     """
     Run complete backtest for single strategy/symbol.
 
@@ -356,7 +355,10 @@ def run_single_backtest(df: pd.DataFrame, strategy, initial_cash: float = 10000.
         entries, sl_stop, tp_stop = strategy.generate_signals(df)
 
         # Create backtester
-        backtester = HighFrequencyBacktester(initial_cash=initial_cash, fees=fees)
+        backtester = HighFrequencyBacktester(
+            initial_cash=initial_cash,
+            fees=fees
+        )
 
         # Run backtest
         strategy_name = getattr(strategy, 'symbol', 'Unknown')
@@ -370,23 +372,35 @@ def run_single_backtest(df: pd.DataFrame, strategy, initial_cash: float = 10000.
             strategy_info = strategy.get_strategy_info()
             metrics['strategy_info'] = strategy_info
 
-        return {'success': True, 'portfolio': pf, 'metrics': metrics,
-            'strategy': strategy_name, 'error': None}
+        return {
+            'success': True,
+            'portfolio': pf,
+            'metrics': metrics,
+            'strategy': strategy_name,
+            'error': None
+        }
 
     except Exception as e:
         logger.error(f"Backtest failed: {e}")
         import traceback
         traceback.print_exc()
 
-        return {'success': False, 'portfolio': None,
-            'metrics': {'total_return': 0.0, 'trades_count': 0, 'trades_per_year': 0.0,
-                'error': str(e)}, 'strategy': getattr(strategy, 'symbol', 'Unknown'),
-            'error': str(e)}
-
+        return {
+            'success': False,
+            'portfolio': None,
+            'metrics': {
+                'total_return': 0.0,
+                'trades_count': 0,
+                'trades_per_year': 0.0,
+                'error': str(e)
+            },
+            'strategy': getattr(strategy, 'symbol', 'Unknown'),
+            'error': str(e)
+        }
 
 def optimize_for_frequency(df: pd.DataFrame, strategy,
-                           target_trades_per_year: int = 250,
-                           max_iterations: int = 10) -> Dict[str, Any]:
+                          target_trades_per_year: int = 250,
+                          max_iterations: int = 10) -> Dict[str, Any]:
     """
     Optimize strategy parameters to achieve target trade frequency.
 
@@ -396,9 +410,12 @@ def optimize_for_frequency(df: pd.DataFrame, strategy,
     logger.info(f"Target: {target_trades_per_year} trades/year")
 
     # Base parameters to optimize
-    optimization_params = [('stress_threshold', [2.0, 5.0, 10.0, 20.0]),
-        ('rsi_min', [1, 5, 15, 25]), ('rsi_max', [75, 85, 95, 99]),
-        ('min_wick_ratio', [0.001, 0.01, 0.1, 0.3]), ]
+    optimization_params = [
+        ('stress_threshold', [2.0, 5.0, 10.0, 20.0]),
+        ('rsi_min', [1, 5, 15, 25]),
+        ('rsi_max', [75, 85, 95, 99]),
+        ('min_wick_ratio', [0.001, 0.01, 0.1, 0.3]),
+    ]
 
     best_result = None
     best_distance = float('inf')
@@ -422,17 +439,18 @@ def optimize_for_frequency(df: pd.DataFrame, strategy,
                 trades_per_year = result['metrics'].get('trades_per_year', 0)
                 distance = abs(trades_per_year - target_trades_per_year)
 
-                logger.info(
-                    f"Iteration {iteration + 1}: {trades_per_year:.0f} trades/year")
+                logger.info(f"Iteration {iteration + 1}: {trades_per_year:.0f} trades/year")
 
                 if distance < best_distance:
                     best_distance = distance
-                    best_result = {'parameters': param_combo.copy(),
+                    best_result = {
+                        'parameters': param_combo.copy(),
                         'trades_per_year': trades_per_year,
-                        'metrics': result['metrics'], 'distance': distance}
+                        'metrics': result['metrics'],
+                        'distance': distance
+                    }
 
-                    logger.info(
-                        f"New best: {trades_per_year:.0f} trades/year (distance: {distance:.0f})")
+                    logger.info(f"New best: {trades_per_year:.0f} trades/year (distance: {distance:.0f})")
 
                 # Early termination if target achieved
                 if distance < target_trades_per_year * 0.1:  # Within 10%
@@ -452,7 +470,6 @@ def optimize_for_frequency(df: pd.DataFrame, strategy,
         logger.warning("Optimization failed - no valid results")
         return {'error': 'Optimization failed'}
 
-
 # Convenience functions
 def quick_backtest(df: pd.DataFrame, strategy, initial_cash: float = 10000.0) -> float:
     """Quick backtest returning only trades per year."""
@@ -462,9 +479,8 @@ def quick_backtest(df: pd.DataFrame, strategy, initial_cash: float = 10000.0) ->
     except:
         return 0.0
 
-
 def backtest_with_validation(df: pd.DataFrame, strategy,
-                             min_trades_per_year: int = 50) -> Dict[str, Any]:
+                           min_trades_per_year: int = 50) -> Dict[str, Any]:
     """Backtest with frequency validation."""
     result = run_single_backtest(df, strategy)
 
@@ -472,16 +488,22 @@ def backtest_with_validation(df: pd.DataFrame, strategy,
         trades_per_year = result['metrics'].get('trades_per_year', 0)
         result['frequency_valid'] = trades_per_year >= min_trades_per_year
         result['frequency_status'] = (
-            'Sufficient' if trades_per_year >= min_trades_per_year else 'Insufficient')
+            'Sufficient' if trades_per_year >= min_trades_per_year else 'Insufficient'
+        )
     else:
         result['frequency_valid'] = False
         result['frequency_status'] = 'Failed'
 
     return result
 
-
 # Module exports
-__all__ = ['HighFrequencyBacktester', 'calculate_metrics', 'run_single_backtest',
-    'optimize_for_frequency', 'quick_backtest', 'backtest_with_validation']
+__all__ = [
+    'HighFrequencyBacktester',
+    'calculate_metrics',
+    'run_single_backtest',
+    'optimize_for_frequency',
+    'quick_backtest',
+    'backtest_with_validation'
+]
 
 logger.info("High-frequency backtest engine loaded")
